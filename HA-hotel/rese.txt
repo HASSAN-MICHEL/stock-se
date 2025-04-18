@@ -1,0 +1,1385 @@
+   // backend original   
+   import pool from "../config/db.js";
+
+const Reservation = {
+  async getAll() {
+    const result = await pool.query("SELECT * FROM reservations");
+    return result.rows;
+  },
+
+  async getById(id) {
+    const result = await pool.query("SELECT * FROM reservations WHERE id = $1", [id]);
+    return result.rows[0];
+  },
+
+  async create({ client_id, chambre_id, date_debut, date_fin, statut, montant_total }) {
+    const result = await pool.query(
+      "INSERT INTO reservations (client_id, chambre_id, date_debut, date_fin, statut, montant_total) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+      [client_id, chambre_id, date_debut, date_fin, statut, montant_total]
+    );
+    return result.rows[0];
+  },
+
+  async update(id, { client_id, chambre_id, date_debut, date_fin, statut, montant_total }) {
+    const result = await pool.query(
+      "UPDATE reservations SET client_id = $1, chambre_id = $2, date_debut = $3, date_fin = $4, statut = $5, montant_total = $6 WHERE id = $7 RETURNING *",
+      [client_id, chambre_id, date_debut, date_fin, statut, montant_total, id]
+    );
+    return result.rows[0];
+  },
+
+  async delete(id) {
+    const result = await pool.query("DELETE FROM reservations WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0];
+  },
+};
+
+export default Reservation;
+
+// controller: 
+
+import Reservation from "../models/reservation.js"; // Assurez-vous que le chemin est correct
+
+const reservationController = {
+  async getAll(req, res) {
+    try {
+      const reservations = await Reservation.getAll();
+      res.json(reservations);
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  async getById(req, res) {
+    try {
+      const reservation = await Reservation.getById(req.params.id);
+      if (!reservation) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      res.json(reservation);
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  async create(req, res) {
+    try {
+      const { client_id, chambre_id, date_debut, date_fin, statut, montant_total } = req.body;
+      const newReservation = await Reservation.create({ client_id, chambre_id, date_debut, date_fin, statut, montant_total });
+      res.status(201).json(newReservation);
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  async update(req, res) {
+    try {
+      const { client_id, chambre_id, date_debut, date_fin, statut, montant_total } = req.body;
+      const updatedReservation = await Reservation.update(req.params.id, { client_id, chambre_id, date_debut, date_fin, statut, montant_total });
+      if (!updatedReservation) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      res.json(updatedReservation);
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  async delete(req, res) {
+    try {
+      const reservationId = req.params.id;
+      console.log("ID de la réservation à supprimer :", reservationId);
+      
+      const reservation = await Reservation.getById(reservationId);
+      if (!reservation) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+  
+      await Reservation.delete(reservationId);
+      console.log("Réservation supprimée :", reservationId);
+  
+      res.status(204).send();
+    } catch (err) {
+      console.error("Erreur lors de la suppression :", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  }
+};
+
+export const { getAll, getById, create, update } = reservationController;
+export const deleteReservation = reservationController.delete;
+
+
+// reservationRoute
+
+import express from "express";
+import { getAll, getById, create, update, deleteReservation } from "../controllers/reservationController.js";  // Importation des fonctions
+
+const router = express.Router();
+
+router.get("/", getAll);
+router.get("/:id", getById);
+router.post("/", create);
+router.put("/:id", update);
+router.delete("/:id", deleteReservation);  // Définir correctement la route de suppression
+
+export default router;
+
+
+//frontend: 
+
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { Table, Button, Modal, Form } from "react-bootstrap";
+import "bootstrap/dist/css/bootstrap.min.css";
+
+axios.defaults.baseURL = "http://localhost:3000/api";
+
+const Reservations = () => {
+  const [reservations, setReservations] = useState([]);
+  const [show, setShow] = useState(false);
+  const [formData, setFormData] = useState({
+    client_id: "",
+    chambre_id: "",
+    date_debut: "",
+    date_fin: "",
+    montant_total: 0,
+    statut: "En attente",
+    mode_paiement: "Espèces",
+    commentaire: "",
+  });
+  const [editId, setEditId] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [chambres, setChambres] = useState([]);
+  const [chambrePrix, setChambrePrix] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetchReservations();
+    fetchClients();
+    fetchChambres();
+  }, []);
+
+  const fetchReservations = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get("/reservations");
+      setReservations(response.data);
+    } catch (error) {
+      console.error("Erreur lors du chargement des réservations :", error);
+      alert("Impossible de charger les réservations.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchClients = async () => {
+    try {
+      const response = await axios.get("/clients");
+      setClients(response.data);
+    } catch (error) {
+      console.error("Erreur lors du chargement des clients :", error);
+    }
+  };
+
+  const fetchChambres = async () => {
+    try {
+      const response = await axios.get("/chambres");
+      setChambres(response.data);
+    } catch (error) {
+      console.error("Erreur lors du chargement des chambres :", error);
+    }
+  };
+
+  const handleShow = (reservation = null) => {
+    if (reservation) {
+      setFormData({
+        client_id: reservation.client_id,
+        chambre_id: reservation.chambre_id,
+        date_debut: reservation.date_debut,
+        date_fin: reservation.date_fin,
+        montant_total: reservation.montant_total,
+        statut: reservation.statut,
+        mode_paiement: reservation.mode_paiement,
+        commentaire: reservation.commentaire || "",
+      });
+      setEditId(reservation.id);
+      const chambre = chambres.find((ch) => ch.id === reservation.chambre_id);
+      setChambrePrix(chambre ? chambre.prix : 0);
+    } else {
+      setFormData({
+        client_id: "",
+        chambre_id: "",
+        date_debut: "",
+        date_fin: "",
+        montant_total: 0,
+        statut: "En attente",
+        mode_paiement: "Espèces",
+        commentaire: "",
+      });
+      setChambrePrix(0);
+      setEditId(null);
+    }
+    setShow(true);
+  };
+
+  const handleClose = () => setShow(false);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+
+    if (name === "chambre_id") {
+      const chambre = chambres.find((ch) => ch.id === parseInt(value));
+      setChambrePrix(chambre ? chambre.prix : 0);
+      calculateMontantTotal(formData.date_debut, formData.date_fin, chambre ? chambre.prix : 0);
+    }
+
+    if (name === "date_debut" || name === "date_fin") {
+      calculateMontantTotal(name === "date_debut" ? value : formData.date_debut, name === "date_fin" ? value : formData.date_fin, chambrePrix);
+    }
+  };
+
+  const calculateMontantTotal = (dateDebut, dateFin, prixParJour) => {
+    if (dateDebut && dateFin && prixParJour > 0) {
+      const startDate = new Date(dateDebut);
+      const endDate = new Date(dateFin);
+      const diffTime = endDate - startDate;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays > 0) {
+        setFormData((prev) => ({ ...prev, montant_total: diffDays * prixParJour }));
+      } else {
+        setFormData((prev) => ({ ...prev, montant_total: 0 }));
+      }
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.client_id || !formData.chambre_id || !formData.date_debut || !formData.date_fin || formData.montant_total <= 0) {
+      alert("Tous les champs doivent être remplis et valides !");
+      return;
+    }
+
+    try {
+      if (editId) {
+        await axios.put(`/reservations/${editId}`, formData);
+        alert("Réservation modifiée avec succès !");
+      } else {
+        await axios.post("/reservations", formData);
+        alert("Réservation ajoutée avec succès !");
+      }
+      fetchReservations();
+      handleClose();
+    } catch (error) {
+      console.error("Erreur lors de l'ajout/modification de la réservation :", error);
+      alert("Une erreur s'est produite.");
+    }
+  };
+
+  return (
+    <div className="container mt-4">
+      <h2>Gestion des Réservations</h2>
+      <Button variant="primary" onClick={() => handleShow()} className="mb-3">
+        Ajouter une réservation
+      </Button>
+      <Modal show={show} onHide={handleClose}>
+          <Modal.Header closeButton>
+            <Modal.Title>{editId ? "Modifier" : "Ajouter"} une réservation</Modal.Title>
+         </Modal.Header>
+       <Modal.Body>
+         <Form>
+         {/* Sélection du client */}
+         <Form.Group className="mb-3">
+         <Form.Label>Client</Form.Label>
+          <Form.Select name="client_id" value={formData.client_id} onChange={handleChange} required>
+          <option value="">Sélectionner un client</option>
+          {clients.map((client) => (
+            <option key={client.id} value={client.id}>
+              {client.nom} {client.prenom}
+            </option>
+          ))}
+          </Form.Select>
+          </Form.Group>
+
+      {/* Sélection de la chambre */}
+      <Form.Group className="mb-3">
+        <Form.Label>Chambre</Form.Label>
+        <Form.Select name="chambre_id" value={formData.chambre_id} onChange={handleChange} required>
+          <option value="">Sélectionner une chambre</option>
+          {chambres.map((chambre) => (
+            <option key={chambre.id} value={chambre.id}>
+              {chambre.numero} - {chambre.type}
+            </option>
+          ))}
+        </Form.Select>
+      </Form.Group>
+
+      {/* Date de début */}
+      <Form.Group className="mb-3">
+        <Form.Label>Date de début</Form.Label>
+        <Form.Control type="date" name="date_debut" value={formData.date_debut} onChange={handleChange} required />
+      </Form.Group>
+
+      {/* Date de fin */}
+      <Form.Group className="mb-3">
+        <Form.Label>Date de fin</Form.Label>
+        <Form.Control type="date" name="date_fin" value={formData.date_fin} onChange={handleChange} required />
+      </Form.Group>
+
+      {/* Montant total */}
+      <Form.Group className="mb-3">
+        <Form.Label>Montant total (€)</Form.Label>
+        <Form.Control type="number" name="montant_total" value={formData.montant_total} onChange={handleChange} required />
+      </Form.Group>
+
+      {/* Statut de la réservation */}
+      <Form.Group className="mb-3">
+        <Form.Label>Statut</Form.Label>
+        <Form.Select name="statut" value={formData.statut} onChange={handleChange}>
+          <option value="En attente">En attente</option>
+          <option value="Confirmée">Confirmée</option>
+          <option value="Annulée">Annulée</option>
+        </Form.Select>
+      </Form.Group>
+
+      {/* Date de réservation (auto-remplie) */}
+      <Form.Group className="mb-3">
+        <Form.Label>Date de réservation</Form.Label>
+        <Form.Control type="date" name="date_reservation" value={formData.date_reservation} onChange={handleChange} />
+      </Form.Group>
+
+      {/* Commentaire */}
+      
+      {/* Bouton de soumission */}
+      <Button variant="primary" onClick={handleSubmit}>
+        {editId ? "Modifier" : "Ajouter"} la réservation
+      </Button>
+    </Form>
+  </Modal.Body>
+</Modal>
+
+    </div>
+  );
+};
+
+export default Reservations;
+
+17/02/2025
+
+///BACKEND ORIGINAL : 
+
+import pool from "../config/db.js";
+
+const Reservation = {
+  async getAll() {
+    const result = await pool.query("SELECT * FROM reservations");
+    return result.rows;
+  },
+
+  async getById(id) {
+    const result = await pool.query("SELECT * FROM reservations WHERE id = $1", [id]);
+    return result.rows[0];
+  },
+
+  async create({ client_id, chambre_id, date_debut, date_fin, statut, montant_total }) {
+    try {
+      // Insérer la réservation
+      const reservationResult = await pool.query(
+        "INSERT INTO reservations (client_id, chambre_id, date_debut, date_fin, statut, montant_total) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+        [client_id, chambre_id, date_debut, date_fin, statut, montant_total]
+      );
+     
+      const reservation = reservationResult.rows[0];
+
+      // Insérer automatiquement la facture associée
+      const factureResult = await pool.query(
+        "INSERT INTO factures (client_id, reservation_id, montant_total) VALUES ($1, $2, $3) RETURNING *",
+        [client_id, reservation.id, montant_total]
+      );
+
+      return { reservation, facture: factureResult.rows[0] };
+    } catch (error) {
+      console.error("Erreur lors de la création de la réservation et de la facture :", error);
+      throw error;
+    }
+  },
+
+  async update(id, { client_id, chambre_id, date_debut, date_fin, statut, montant_total }) {
+    const result = await pool.query(
+      "UPDATE reservations SET client_id = $1, chambre_id = $2, date_debut = $3, date_fin = $4, statut = $5, montant_total = $6 WHERE id = $7 RETURNING *",
+      [client_id, chambre_id, date_debut, date_fin, statut, montant_total, id]
+    );
+    return result.rows[0];
+  },
+
+  async delete(id) {
+    const result = await pool.query("DELETE FROM reservations WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0];
+  },
+};
+
+export default Reservation;
+
+
+//// reservationController
+
+import Reservation from "../models/reservation.js"; // Assurez-vous que le chemin est correct
+
+const reservationController = {
+  async getAll(req, res) {
+    try {
+      const reservations = await Reservation.getAll();
+      res.json(reservations);
+    } catch (err) {
+      res.status(500).json({ message: "Erreur lors de la récupération des réservations", error: err.message });
+    }
+  },
+
+  async getById(req, res) {
+    try {
+      const reservation = await Reservation.getById(req.params.id);
+      if (!reservation) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      res.json(reservation);
+    } catch (err) {
+      res.status(500).json({ message: "Erreur lors de la récupération de la réservation", error: err.message });
+    }
+  },
+
+  async create(req, res) {
+    try {
+      const { client_id, chambre_id, date_debut, date_fin, statut, montant_total } = req.body;
+
+      // Création de la réservation et génération de la facture en une seule transaction
+      const { reservation, facture } = await Reservation.create({ client_id, chambre_id, date_debut, date_fin, statut, montant_total });
+
+      res.status(201).json({
+        message: "Réservation créée avec succès !",
+        reservation,
+        facture,
+      });
+    } catch (err) {
+      console.error("Erreur lors de la création de la réservation et de la facture :", err);
+      res.status(500).json({ message: "Erreur lors de la création de la réservation", error: err.message });
+    }
+  },
+
+  async update(req, res) {
+    try {
+      const { client_id, chambre_id, date_debut, date_fin, statut, montant_total } = req.body;
+
+      const updatedReservation = await Reservation.update(req.params.id, { client_id, chambre_id, date_debut, date_fin, statut, montant_total });
+
+      if (!updatedReservation) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+
+      res.json({
+        message: "Réservation mise à jour avec succès !",
+        reservation: updatedReservation,
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Erreur lors de la mise à jour de la réservation", error: err.message });
+    }
+  },
+
+  async delete(req, res) {
+    try {
+      const reservationId = req.params.id;
+      console.log("ID de la réservation à supprimer :", reservationId);
+
+      const reservation = await Reservation.getById(reservationId);
+      if (!reservation) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+
+      await Reservation.delete(reservationId);
+      console.log("Réservation supprimée :", reservationId);
+
+      res.status(204).json({ message: "Réservation supprimée avec succès !" });
+    } catch (err) {
+      console.error("Erreur lors de la suppression :", err.message);
+      res.status(500).json({ message: "Erreur lors de la suppression de la réservation", error: err.message });
+    }
+  }
+};
+
+export const { getAll, getById, create, update } = reservationController;
+export const deleteReservation = reservationController.delete;
+
+/// reservationRoute
+
+import express from "express";
+import { getAll, getById, create, update, deleteReservation } from "../controllers/reservationController.js";  
+
+const router = express.Router();
+
+// Récupérer toutes les réservations
+router.get("/", getAll);
+
+// Récupérer une réservation par son ID
+router.get("/:id", getById);
+
+// Créer une nouvelle réservation
+router.post("/", create);
+
+// Mettre à jour une réservation existante
+router.put("/:id", update);
+
+// Supprimer une réservation
+router.delete("/:id", deleteReservation);
+
+export default router;
+
+app.js originale : import express from "express";
+import cors from "cors"; 
+import chambreRoutes from "./routes/chambreRoutes.js";
+import menuRoutes from "./routes/menuRoutes.js";
+import boissonRoutes from "./routes/boissonRoutes.js";
+import venteBoissonRoutes from "./routes/venteBoissonRoutes.js";
+import orderRoutes from "./routes/orderRoutes.js"; 
+import clientRoutes from "./routes/clientRoutes.js" ;// Vérifie que le chemin est correct
+import reservationRoutes from "./routes/reservationRoutes.js";
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Routes
+app.use("/api/chambres", chambreRoutes);
+app.use("/api/restaurant/menu", menuRoutes);
+app.use("/api/restaurant/order", orderRoutes); 
+app.use("/api/vente-boissons" , venteBoissonRoutes)
+app.use("/api/boissons" , boissonRoutes)
+app.use("/api/clients" , clientRoutes)
+app.use("/api/reservations" , reservationRoutes)
+
+// Gestion des erreurs
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: "Erreur interne du serveur" });
+});
+
+export default app;
+/// resr.js : 
+import pool from "../config/db.js";
+
+const Reservation = {
+  async getAll() {
+    const result = await pool.query("SELECT * FROM reservations");
+    return result.rows;
+  },
+
+  async getById(id) {
+    const result = await pool.query("SELECT * FROM reservations WHERE id = $1", [id]);
+    return result.rows[0];
+  },
+
+  async create({ client_id, chambre_id, date_debut, date_fin, statut, montant_total }) {
+    try {
+      // Vérifier si la chambre est disponible
+      const chambreResult = await pool.query(
+        "SELECT statut FROM chambres WHERE id = $1",
+        [chambre_id]
+      );
+
+      if (chambreResult.rows.length === 0) {
+        throw new Error("La chambre spécifiée n'existe pas.");
+      }
+
+      const chambreStatut = chambreResult.rows[0].statut;
+
+      if (chambreStatut !== 'disponible') {
+        throw new Error("La chambre n'est pas disponible pour une réservation.");
+      }
+
+      // Démarrer une transaction
+      await pool.query("BEGIN");
+
+      // Insérer la réservation
+      const reservationResult = await pool.query(
+        "INSERT INTO reservations (client_id, chambre_id, date_debut, date_fin, statut, montant_total) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+        [client_id, chambre_id, date_debut, date_fin, statut, montant_total]
+      );
+
+      const reservation = reservationResult.rows[0];
+
+      // Mettre à jour le statut de la chambre à 'occupée'
+      await pool.query(
+        "UPDATE chambres SET statut = 'occupée' WHERE id = $1",
+        [chambre_id]
+      );
+
+      // Insérer automatiquement la facture associée
+      const factureResult = await pool.query(
+        "INSERT INTO factures (client_id, reservation_id, montant_total) VALUES ($1, $2, $3) RETURNING *",
+        [client_id, reservation.id, montant_total]
+      );
+
+      // Valider la transaction
+      await pool.query("COMMIT");
+
+      return { reservation, facture: factureResult.rows[0] };
+    } catch (error) {
+      // Annuler la transaction en cas d'erreur
+      await pool.query("ROLLBACK");
+      console.error("Erreur lors de la création de la réservation et de la facture :", error);
+      throw error;
+    }
+  },
+
+  async update(id, { client_id, chambre_id, date_debut, date_fin, statut, montant_total }) {
+    const result = await pool.query(
+      "UPDATE reservations SET client_id = $1, chambre_id = $2, date_debut = $3, date_fin = $4, statut = $5, montant_total = $6 WHERE id = $7 RETURNING *",
+      [client_id, chambre_id, date_debut, date_fin, statut, montant_total, id]
+    );
+    return result.rows[0];
+  },
+
+  async delete(id) {
+    const result = await pool.query("DELETE FROM reservations WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0];
+  },
+
+  async checkAndUpdateChambreStatus() {
+    try {
+      // Récupérer les réservations terminées
+      const currentDate = new Date().toISOString().split('T')[0]; // Date du jour au format YYYY-MM-DD
+      const reservationsResult = await pool.query(
+        "SELECT id, chambre_id FROM reservations WHERE date_fin < $1 AND statut = 'active'",
+        [currentDate]
+      );
+
+      // Mettre à jour le statut des chambres associées
+      for (const reservation of reservationsResult.rows) {
+        await pool.query(
+          "UPDATE chambres SET statut = 'disponible' WHERE id = $1",
+          [reservation.chambre_id]
+        );
+
+        // Mettre à jour le statut de la réservation à 'terminée'
+        await pool.query(
+          "UPDATE reservations SET statut = 'terminée' WHERE id = $1",
+          [reservation.id]
+        );
+      }
+
+      console.log("Statut des chambres et réservations mis à jour avec succès.");
+    } catch (error) {
+      console.error("Erreur lors de la mise à jour du statut des chambres :", error);
+      throw error;
+    }
+  },
+};
+
+export default Reservation;
+
+
+
+Connexion (login(user))://
+async login(req, res) {
+    try {
+      const { email, mot_de_passe } = req.body;
+
+      // Vérifier l'email et le mot de passe
+      const user = await User.verifyPassword(email, mot_de_passe);
+
+      res.json({
+        message: "Authentification réussie !",
+        user,
+      });
+    } catch (err) {
+      res.status(401).json({ message: "Erreur d'authentification", error: err.message });
+    }
+  },
+
+
+  dashboard.jsx 25/02/2025
+
+import React, { useState } from "react";
+import { Link, Outlet } from "react-router-dom";
+import { FaChartLine } from "react-icons/fa"; // Icône de graphique linéaire
+import { MdBarChart } from "react-icons/md"; // Icône de diagramme en barres
+import { BsGraphUp } from "react-icons/bs"; // Icône de graphique en croissance
+import { FaBed, FaCalendarAlt, FaUtensils, FaGlassCheers, FaShoppingCart, FaClipboardList, FaUsers } from "react-icons/fa";
+import { Container, Row, Col, Nav, Button, Offcanvas } from "react-bootstrap";
+import "bootstrap/dist/css/bootstrap.min.css";
+
+const Dashboard = () => {
+  const [showMenu, setShowMenu] = useState(false); // État pour contrôler l'affichage du menu
+
+  const handleMenuToggle = () => setShowMenu(!showMenu); // Fonction pour afficher/masquer le menu
+
+  return (
+    <Container fluid className="p-0 d-flex flex-column min-vh-100">
+      {/* Header fixe */}
+      <header className="bg-primary text-white p-3">
+        <Row className="align-items-center">
+          <Col>
+            <h1 className="text-center mb-0">Next Management</h1>
+          </Col>
+          <Col xs="auto">
+            {/* Bouton pour afficher/masquer le menu */}
+            <Button variant="light" onClick={handleMenuToggle}>
+              ☰ Menu
+            </Button>
+          </Col>
+        </Row>
+      </header>
+
+      {/* Contenu principal avec défilement */}
+      <Row className="flex-grow-1">
+        {/* Menu latéral (masqué par défaut) */}
+        <Offcanvas show={showMenu} onHide={() => setShowMenu(false)} placement="start">
+          <Offcanvas.Header closeButton>
+            <Offcanvas.Title>Menu</Offcanvas.Title>
+          </Offcanvas.Header>
+          <Offcanvas.Body>
+            <Nav className="flex-column">
+              <Nav.Link as={Link} to="/reservation" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaCalendarAlt className="me-2" />
+                Réservations
+              </Nav.Link>
+              <Nav.Link as={Link} to="/menus" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaUtensils className="me-2" />
+                RESTAURANT
+              </Nav.Link>
+              <Nav.Link as={Link} to="/boisson" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaGlassCheers className="me-2" />
+                BAR
+              </Nav.Link>
+              <Nav.Link as={Link} to="/clients" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaUsers className="me-2" />
+                CLIENTS
+              </Nav.Link>
+              <Nav.Link as={Link} to="/user" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaUsers className="me-2" />
+                User
+              </Nav.Link>
+              <Nav.Link as={Link} to="/rapportvente" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaChartLine className="me-2" />
+                Rapport du Bar
+              </Nav.Link>
+            </Nav>
+          </Offcanvas.Body>
+        </Offcanvas>
+
+        {/* Zone principale pour afficher les composants imbriqués */}
+        <Col className="p-4">
+          <Outlet />
+        </Col>
+      </Row>
+
+      {/* Footer */}
+      <footer className="bg-primary text-white text-center p-3">
+        <p className="mb-0">© 2023 Next Management System. Tous droits réservés.</p>
+      </footer>
+    </Container>
+  );
+};
+
+export default Dashboard;
+
+
+// 10/03/2025 : SECURITER DE CONNEXION POUR LES PAGES 
+
+Dashboard.jsx:
+
+import React, { useState } from "react";
+import { Link, Outlet } from "react-router-dom";
+import { FaChartLine } from "react-icons/fa"; // Icône de graphique linéaire
+import { MdBarChart } from "react-icons/md"; // Icône de diagramme en barres
+import { BsGraphUp } from "react-icons/bs"; // Icône de graphique en croissance
+import { FaBed, FaCalendarAlt, FaUtensils, FaGlassCheers, FaShoppingCart, FaClipboardList, FaUsers } from "react-icons/fa";
+import { Container, Row, Col, Nav, Button, Offcanvas } from "react-bootstrap";
+import "bootstrap/dist/css/bootstrap.min.css";
+
+const Dashboard = () => {
+  const [showMenu, setShowMenu] = useState(false); // État pour contrôler l'affichage du menu
+
+  const handleMenuToggle = () => setShowMenu(!showMenu); // Fonction pour afficher/masquer le menu
+
+  return (
+    <Container fluid className="p-0 d-flex flex-column min-vh-100">
+      {/* Header fixe */}
+      <header className="bg-primary text-white p-3">
+        <Row className="align-items-center">
+          <Col>
+            <h1 className="text-center mb-0">Next Management</h1>
+          </Col>
+          <Col xs="auto">
+            {/* Bouton pour afficher/masquer le menu */}
+            <Button variant="light" onClick={handleMenuToggle}>
+              ☰ Menu
+            </Button>
+          </Col>
+        </Row>
+      </header>
+
+      {/* Contenu principal avec défilement */}
+      <Row className="flex-grow-1">
+        {/* Menu latéral (masqué par défaut) */}
+        <Offcanvas show={showMenu} onHide={() => setShowMenu(false)} placement="start">
+          <Offcanvas.Header closeButton>
+            <Offcanvas.Title>Menu</Offcanvas.Title>
+          </Offcanvas.Header>
+          <Offcanvas.Body>
+            <Nav className="flex-column">
+              <Nav.Link as={Link} to="/reservation" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaCalendarAlt className="me-2" />
+                Réservations
+              </Nav.Link>
+              <Nav.Link as={Link} to="/menus" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaUtensils className="me-2" />
+                RESTAURANT
+              </Nav.Link>
+              <Nav.Link as={Link} to="/boisson" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaGlassCheers className="me-2" />
+                BAR
+              </Nav.Link>
+              <Nav.Link as={Link} to="/clients" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaUsers className="me-2" />
+                CLIENTS
+              </Nav.Link>
+              <Nav.Link as={Link} to="/user" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaUsers className="me-2" />
+                User
+              </Nav.Link>
+              <Nav.Link as={Link} to="/rapportvente" className="mb-2" onClick={() => setShowMenu(false)}>
+                <FaChartLine className="me-2" />
+                Rapport du Bar
+              </Nav.Link>
+            </Nav>
+          </Offcanvas.Body>
+        </Offcanvas>
+
+        {/* Zone principale pour afficher les composants imbriqués */}
+        <Col className="p-4">
+          <Outlet />
+        </Col>
+      </Row>
+
+      {/* Footer */}
+      <footer className="bg-primary text-white text-center p-3">
+        <p className="mb-0">© 2023 Next Management System. Tous droits réservés.</p>
+      </footer>
+    </Container>
+  );
+};
+
+export default Dashboard;
+
+User.js:
+
+import pool from "../config/db.js";
+import bcrypt from "bcrypt"; // Pour le hachage des mots de passe
+
+const User = {
+  // Créer un nouvel utilisateur
+  async create({ nom, email, mot_de_passe, role }) {
+    // Hacher le mot de passe avant de l'enregistrer
+    const hashedPassword = await bcrypt.hash(mot_de_passe, 10); // 10 est le coût du hachage
+
+    const result = await pool.query(
+      `INSERT INTO users (nom, email, mot_de_passe, role)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [nom, email, hashedPassword, role]
+    );
+    return result.rows[0];
+  },
+
+  // Récupérer tous les utilisateurs
+  async getAll() {
+    const result = await pool.query("SELECT id, nom, email, role, date_creation FROM users");
+    return result.rows;
+  },
+
+  // Récupérer un utilisateur par son ID
+  async getById(id) {
+    const result = await pool.query(
+      "SELECT id, nom, email, role, date_creation FROM users WHERE id = $1",
+      [id]
+    );
+    return result.rows[0];
+  },
+
+  // Récupérer un utilisateur par son email (pour l'authentification)
+  async getByEmail(email) {
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    return result.rows[0];
+  },
+
+  // Mettre à jour un utilisateur
+  async update(id, { nom, email, role }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET nom = $1, email = $2, role = $3
+       WHERE id = $4 RETURNING *`,
+      [nom, email, role, id]
+    );
+    return result.rows[0];
+  },
+
+  // Mettre à jour le mot de passe d'un utilisateur
+  async updatePassword(id, newPassword) {
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const result = await pool.query(
+      `UPDATE users
+       SET mot_de_passe = $1
+       WHERE id = $2 RETURNING *`,
+      [hashedPassword, id]
+    );
+    return result.rows[0];
+  },
+
+  // Supprimer un utilisateur
+  async delete(id) {
+    const result = await pool.query("DELETE FROM users WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0];
+  },
+
+  // Vérifier le mot de passe (pour l'authentification)
+  async verifyPassword(email, password) {
+    const user = await this.getByEmail(email);
+    if (!user) {
+      throw new Error("Utilisateur non trouvé");
+    }
+    const isMatch = await bcrypt.compare(password, user.mot_de_passe);
+    if (!isMatch) {
+      throw new Error("Mot de passe incorrect");
+    }
+    return user;
+  },
+};
+
+export default User; 
+
+
+UserController.js :
+
+import User from "../models/user.js";
+import jwt from "jsonwebtoken"; // Pour générer des tokens JWT (optionnel) // Assurez-vous que le chemin est correct
+
+const userController = {
+  // Récupérer tous les utilisateurs
+  async getAll(req, res) {
+    try {
+      const users = await User.getAll();
+      res.json(users);
+    } catch (err) {
+      res.status(500).json({ message: "Erreur lors de la récupération des utilisateurs", error: err.message });
+    }
+  },
+
+  // Récupérer un utilisateur par son ID
+  async getById(req, res) {
+    try {
+      const user = await User.getById(req.params.id);
+      if (!user) {
+        return res.status(404).json({ message: "Utilisateur non trouvé" });
+      }
+      res.json(user);
+    } catch (err) {
+      res.status(500).json({ message: "Erreur lors de la récupération de l'utilisateur", error: err.message });
+    }
+  },
+
+    // Connexion de l'utilisateur
+    async login(req, res) {
+      const { email, mot_de_passe } = req.body;
+  
+      try {
+        // Vérifier si l'utilisateur existe
+        const user = await User.getByEmail(email);
+        if (!user) {
+          return res.status(401).json({ message: "Email ou mot de passe incorrect" });
+        }
+  
+        // Vérifier le mot de passe
+        const isMatch = await bcrypt.compare(mot_de_passe, user.mot_de_passe);
+        if (!isMatch) {
+          return res.status(401).json({ message: "Email ou mot de passe incorrect" });
+        }
+  
+        // Générer un token JWT (optionnel)
+        const token = jwt.sign(
+          { id: user.id, role: user.role },
+          process.env.JWT_SECRET, // Utilisez une clé secrète dans votre fichier .env
+          { expiresIn: "1h" } // Durée de validité du token
+        );
+  
+        // Retourner les informations de l'utilisateur et le token
+        res.json({
+          id: user.id,
+          nom: user.nom,
+          email: user.email,
+          role: user.role,
+          token, // Optionnel
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Erreur du serveur" });
+      }
+    },
+  
+    // Vérifier le rôle de l'utilisateur (middleware)
+    async checkRole(req, res, next) {
+      const { role } = req.user; // Supposons que req.user est défini par un middleware d'authentification
+      if (role === "admin" || role === "reception") {
+        next(); // Autoriser l'accès
+      } else {
+        res.status(403).json({ message: "Accès refusé. Rôle insuffisant." });
+      }
+    },
+  
+
+
+  // Créer un nouvel utilisateur
+  async create(req, res) {
+    try {
+      const { nom, email, mot_de_passe, role } = req.body;
+
+      // Création de l'utilisateur
+      const newUser = await User.create({ nom, email, mot_de_passe, role });
+
+      res.status(201).json({
+        message: "Utilisateur créé avec succès !",
+        user: newUser,
+      });
+    } catch (err) {
+      console.error("Erreur lors de la création de l'utilisateur :", err);
+      res.status(500).json({ message: err.message || "Erreur lors de la création de l'utilisateur", error: err.message });
+    }
+  },
+
+  // Mettre à jour un utilisateur
+  async update(req, res) {
+    try {
+      const { nom, email, role } = req.body;
+
+      const updatedUser = await User.update(req.params.id, { nom, email, role });
+
+      if (!updatedUser) {
+        return res.status(404).json({ message: "Utilisateur non trouvé" });
+      }
+
+      res.json({
+        message: "Utilisateur mis à jour avec succès !",
+        user: updatedUser,
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Erreur lors de la mise à jour de l'utilisateur", error: err.message });
+    }
+  },
+
+  // Mettre à jour le mot de passe d'un utilisateur
+  async updatePassword(req, res) {
+    try {
+      const { newPassword } = req.body;
+
+      const updatedUser = await User.updatePassword(req.params.id, newPassword);
+
+      if (!updatedUser) {
+        return res.status(404).json({ message: "Utilisateur non trouvé" });
+      }
+
+      res.json({
+        message: "Mot de passe mis à jour avec succès !",
+        user: updatedUser,
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Erreur lors de la mise à jour du mot de passe", error: err.message });
+    }
+  },
+
+  // Supprimer un utilisateur
+  async delete(req, res) {
+    try {
+      const userId = req.params.id;
+      console.log("ID de l'utilisateur à supprimer :", userId);
+
+      const user = await User.getById(userId);
+      if (!user) {
+        return res.status(404).json({ message: "Utilisateur non trouvé" });
+      }
+
+      await User.delete(userId);
+      console.log("Utilisateur supprimé :", userId);
+
+      res.status(204).json({ message: "Utilisateur supprimé avec succès !" });
+    } catch (err) {
+      console.error("Erreur lors de la suppression :", err.message);
+      res.status(500).json({ message: "Erreur lors de la suppression de l'utilisateur", error: err.message });
+    }
+  },
+
+};
+
+export const { getAll, getById, create, update, updatePassword, login } = userController;
+export const deleteUser = userController.delete;
+
+
+UserRoute.js
+
+
+import express from "express";
+import { getAll , getById , create ,  update ,    updatePassword , login , deleteUser ,} from "../controllers/userController.js"; // Importation des fonctions du contrôleur
+
+const router = express.Router();
+
+// Route pour récupérer tous les utilisateurs
+router.get("/", getAll);
+
+// Route pour récupérer un utilisateur par son ID
+router.get("/:id", getById);
+
+// Route pour créer un nouvel utilisateur
+router.post("/", create);
+
+// Route pour mettre à jour les informations d'un utilisateur
+router.put("/:id", update);
+
+// Route pour mettre à jour le mot de passe d'un utilisateur
+router.put("/:id/password", updatePassword);
+
+// Route pour l'authentification (login)
+router.post("/login", login);
+
+// Route pour supprimer un utilisateur
+router.delete("/:id", deleteUser);
+
+export default router;
+
+
+///use.jsx:
+
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { useNavigate } from "react-router-dom";
+import { Table, Button, Modal, Form } from "react-bootstrap";
+import "bootstrap/dist/css/bootstrap.min.css";
+
+axios.defaults.baseURL = "http://localhost:3000";
+axios.defaults.headers.common["Authorization"] = `Bearer ${localStorage.getItem("token")}`;
+
+const User = () => {
+  const [users, setUsers] = useState([]);
+  const [show, setShow] = useState(false);
+  const [formData, setFormData] = useState({ nom: "", email: "", mot_de_passe: "", role: "admin" });
+  const [editId, setEditId] = useState(null);
+  const [error, setError] = useState(null);
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const usersPerPage = 10;
+
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const response = await axios.get("/users");
+      console.log("Réponse de l'API (fetchUsers) :", response.data); // Debug
+      setUsers(response.data);
+      setError(null);
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || error.message || "Erreur lors du chargement des utilisateurs. Veuillez réessayer.";
+      console.error("Erreur lors du chargement des utilisateurs", errorMessage);
+      setError(errorMessage);
+    }
+  };
+
+  const handleShow = (user = null) => {
+    if (user) {
+      setFormData(user);
+      setEditId(user.id);
+    } else {
+      setFormData({ nom: "", email: "", mot_de_passe: "", role: "admin" });
+      setEditId(null);
+    }
+    setShow(true);
+  };
+
+  const handleClose = () => {
+    setShow(false);
+    setError(null);
+  };
+
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.nom || !formData.email || !formData.role) {
+      setError("Tous les champs sont requis !");
+      return;
+    }
+
+    const dataToSend = {
+      nom: formData.nom,
+      email: formData.email,
+      mot_de_passe: formData.mot_de_passe,
+      role: formData.role,
+    };
+
+    try {
+      if (editId) {
+        const response = await axios.put(`/users/${editId}`, dataToSend);
+        console.log("Réponse de l'API (update) :", response.data); // Debug
+        alert("Utilisateur modifié avec succès !");
+      } else {
+        const response = await axios.post("/users", dataToSend);
+        console.log("Réponse de l'API (create) :", response.data); // Debug
+        alert("Utilisateur ajouté avec succès !");
+      }
+      setError(null);
+      fetchUsers();
+      handleClose();
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || error.message || "Une erreur s'est produite. Veuillez réessayer.";
+      console.error("Erreur lors de l'ajout/modification de l'utilisateur", errorMessage);
+      setError(errorMessage);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await axios.delete(`/users/${id}`);
+      alert("Utilisateur supprimé avec succès !");
+      fetchUsers();
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || error.message || "Une erreur s'est produite. Veuillez réessayer.";
+      console.error("Erreur lors de la suppression de l'utilisateur", errorMessage);
+      setError(errorMessage);
+    }
+  };
+
+  const indexOfLastUser = currentPage * usersPerPage;
+  const indexOfFirstUser = indexOfLastUser - usersPerPage;
+  const currentUsers = users.slice(indexOfFirstUser, indexOfLastUser);
+
+  const paginate = (pageNumber) => setCurrentPage(pageNumber);
+
+  return (
+    <div className="container mt-4">
+      <h2>Gestion des Utilisateurs</h2>
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="d-flex gap-2 mb-3">
+        <Button variant="primary" onClick={handleShow}>
+          Ajouter un Utilisateur
+        </Button>
+      </div>
+
+      {users.length > 0 ? (
+        <>
+          <Table striped bordered hover>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nom</th>
+                <th>Email</th>
+                <th>Rôle</th>
+                <th>Date de Création</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {currentUsers.map((user) => (
+                <tr key={user.id}>
+                  <td>{user.id}</td>
+                  <td>{user.nom}</td>
+                  <td>{user.email}</td>
+                  <td>{user.role}</td>
+                  <td>{new Date(user.date_creation).toLocaleDateString()}</td>
+                  <td>
+                    <Button variant="warning" onClick={() => handleShow(user)} className="me-2">
+                      Modifier
+                    </Button>
+                    <Button variant="danger" onClick={() => handleDelete(user.id)}>
+                      Supprimer
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+
+          <div className="d-flex justify-content-center mt-3">
+            <Button
+              variant="secondary"
+              onClick={() => paginate(currentPage - 1)}
+              disabled={currentPage === 1}
+            >
+              Précédent
+            </Button>
+            <span className="mx-3">Page {currentPage}</span>
+            <Button
+              variant="secondary"
+              onClick={() => paginate(currentPage + 1)}
+              disabled={indexOfLastUser >= users.length}
+            >
+              Suivant
+            </Button>
+          </div>
+        </>
+      ) : (
+        <p>Aucun utilisateur disponible</p>
+      )}
+
+      <Modal show={show} onHide={handleClose}>
+        <Modal.Header closeButton>
+          <Modal.Title>{editId ? "Modifier" : "Ajouter"} un Utilisateur</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form>
+            <Form.Group>
+              <Form.Label>Nom</Form.Label>
+              <Form.Control type="text" name="nom" value={formData.nom} onChange={handleChange} />
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Email</Form.Label>
+              <Form.Control type="email" name="email" value={formData.email} onChange={handleChange} />
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Mot de passe</Form.Label>
+              <Form.Control
+                type="password"
+                name="mot_de_passe"
+                value={formData.mot_de_passe}
+                onChange={handleChange}
+              />
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Rôle</Form.Label>
+              <Form.Select name="role" value={formData.role} onChange={handleChange}>
+                <option value="admin">Admin</option>
+                <option value="reception">Réception</option>
+                <option value="restaurant">Restaurant</option>
+                <option value="bar">Bar</option>
+              </Form.Select>
+            </Form.Group>
+          </Form>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={handleClose}>
+            Annuler
+          </Button>
+          <Button variant="primary" onClick={handleSubmit}>
+            Sauvegarder
+          </Button>
+        </Modal.Footer>
+      </Modal>
+    </div>
+  );
+};
+
+export default User;

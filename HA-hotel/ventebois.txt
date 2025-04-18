@@ -1,0 +1,706 @@
+backend : venteboisson.js 
+
+import pool from "../config/db.js";
+
+const VenteBoisson = {
+  async getAll() {
+    const result = await pool.query("SELECT * FROM ventes_boissons");
+    return result.rows;
+  },
+
+  async getById(id) {
+    const result = await pool.query("SELECT * FROM ventes_boissons WHERE id = $1", [id]);
+    return result.rows[0];
+  },
+
+  async create({ client_id, boisson_id, quantite }) {
+    // Récupérer le prix de la boisson
+    const boissonResult = await pool.query("SELECT prix, stock FROM boissons WHERE id = $1", [boisson_id]);
+    const boisson = boissonResult.rows[0];
+
+    if (!boisson || boisson.stock < quantite) {
+      throw new Error("Boisson non disponible ou stock insuffisant.");
+    }
+
+    const montant_total = boisson.prix * quantite;
+
+    // Insérer la vente
+    const venteResult = await pool.query(
+      "INSERT INTO ventes_boissons (client_id, boisson_id, quantite, montant_total) VALUES ($1, $2, $3, $4) RETURNING *",
+      [client_id, boisson_id, quantite, montant_total]
+    );
+
+    // Mettre à jour le stock de la boisson
+    await pool.query(
+      "UPDATE boissons SET stock = stock - $1 WHERE id = $2",
+      [quantite, boisson_id]
+    );
+
+      // Réduire la quantité en stock
+      await db.query(
+        'UPDATE boissons SET stock = stock - $1 WHERE boisson_id = $2',
+        [quantite, boisson_id]
+    );
+
+    // Générer la facture
+    const vente = venteResult.rows[0];
+    const factureResult = await pool.query(
+      "INSERT INTO factures (client_id, vente_boisson_id, montant_total) VALUES ($1, $2, $3) RETURNING *",
+      [client_id, vente.id, montant_total]
+    );
+
+    return { vente, facture: factureResult.rows[0] };
+  },
+
+  async delete(id) {
+    // Supprimer la vente et sa facture associée
+    const vente = await pool.query("DELETE FROM ventes_boissons WHERE id = $1 RETURNING *", [id]);
+    await pool.query("DELETE FROM factures WHERE vente_boisson_id = $1", [id]);
+    return vente.rows[0];
+  }
+};
+
+export default VenteBoisson;
+
+
+controller :
+
+import VenteBoisson from "../models/venteboisson.js";
+
+const venteBoissonController = {
+  async getAll(req, res) {
+    try {
+      const ventes = await VenteBoisson.getAll();
+      res.json(ventes);
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  async getById(req, res) {
+    try {
+      const vente = await VenteBoisson.getById(req.params.id);
+      if (!vente) {
+        return res.status(404).json({ message: "Vente non trouvée" });
+      }
+      res.json(vente);
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  },
+
+  async create(req, res) {
+    try {
+      const { client_id, boisson_id, quantite } = req.body;
+      const result = await VenteBoisson.create({ client_id, boisson_id, quantite });
+      res.status(201).json(result);
+    } catch (err) {
+      res.status(400).json({ message: err.message });
+    }
+  },
+
+  async delete(req, res) {
+    try {
+      const deletedVente = await VenteBoisson.delete(req.params.id);
+      if (!deletedVente) {
+        return res.status(404).json({ message: "Vente non trouvée" });
+      }
+      res.status(204).send();
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  }
+};
+
+export default venteBoissonController;
+
+
+Routes:
+
+import express from "express";
+import venteBoissonController from "../controllers/venteBoissonController.js";
+
+const router = express.Router();
+
+router.get("/", venteBoissonController.getAll);
+router.get("/:id", venteBoissonController.getById);
+router.post("/", venteBoissonController.create);
+router.delete("/:id", venteBoissonController.delete);
+
+export default router;
+
+Frontend:
+
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { Table, Button, Modal, Form, Spinner } from "react-bootstrap";
+import { useNavigate } from "react-router-dom";
+
+const API_URL_VENTES = "http://localhost:3000/api/vente-boissons";
+const API_URL_BOISSONS = "http://localhost:3000/api/boissons";
+const API_URL_CLIENTS = "http://localhost:3000/api/clients";
+
+const VenteBoissons = () => {
+  const [ventes, setVentes] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [boissons, setBoissons] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [show, setShow] = useState(false);
+  const [formData, setFormData] = useState({ client_id: "", boisson_id: "", quantite: 1 });
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      const [resClients, resBoissons, resVentes] = await Promise.all([
+        axios.get(API_URL_CLIENTS),
+        axios.get(API_URL_BOISSONS),
+        axios.get(API_URL_VENTES)
+      ]);
+      setClients(resClients.data);
+      setBoissons(resBoissons.data);
+      setVentes(resVentes.data);
+    } catch (error) {
+      console.error("Erreur de chargement", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleShow = () => {
+    setFormData({ client_id: "", boisson_id: "", quantite: 1 });
+    setShow(true);
+  };
+
+  const handleClose = () => setShow(false);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+
+  // États pour la pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+
+
+const navigate =  useNavigate();
+
+
+  const handleSubmit = async () => {
+    try {
+      await axios.post(API_URL_VENTES, formData);
+      alert("Vente ajoutée avec succès !");
+      handleClose();
+      fetchData();
+    } catch (error) {
+      console.error("Erreur lors de l'ajout", error);
+      alert("Erreur lors de l'ajout");
+    }
+  };
+// Fonction pour changer de page
+const paginate = (pageNumber) => setCurrentPage(pageNumber);
+
+  return (
+    <div className="container mt-4">
+      <h2> Ventes de Boissons</h2>
+            <div className="d-flex gap-2 mb-3">
+              <Button variant="primary" onClick={handleShow}>
+                VENTE
+              </Button>
+              <Button variant="info" onClick={() => navigate("/boisson")}>
+                Voir les boissons
+              </Button>
+            </div>
+
+      {loading ? <Spinner animation="border" /> : (
+        <Table striped bordered hover className="mt-3">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Client</th>
+              <th>Boisson</th>
+              <th>Quantité</th>
+              <th>Montant (€)</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ventes.map((vente, index) => (
+              <tr key={vente.id}>
+                <td>{index + 1}</td>
+                <td>{clients.find((c) => c.id === vente.client_id)?.nom || "N/A"}</td>
+                <td>{boissons.find((b) => b.id === vente.boisson_id)?.nom || "N/A"}</td>
+                <td>{vente.quantite}</td>
+                <td>{vente.montant_total} €</td>
+                <td>{vente.date_vente}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+
+      <Modal show={show} onHide={handleClose}>
+        <Modal.Header closeButton>
+          <Modal.Title>Nouvelle Vente</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form>
+            <Form.Group>
+              <Form.Label>Client</Form.Label>
+              <Form.Control as="select" name="client_id" onChange={handleChange}>
+                {clients.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+              </Form.Control>
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Boisson</Form.Label>
+              <Form.Control as="select" name="boisson_id" onChange={handleChange}>
+                {boissons.map((b) => <option key={b.id} value={b.id}>{b.nom}</option>)}
+              </Form.Control>
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Quantité</Form.Label>
+              <Form.Control type="number" name="quantite" min="1" onChange={handleChange} />
+            </Form.Group>
+          </Form>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button onClick={handleSubmit}>Valider</Button>
+        </Modal.Footer>
+      </Modal>
+    </div>
+  );
+};
+
+export default VenteBoissons;
+
+
+Frontend.RAPPORT :
+
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { Table, Button, Modal, Form, Spinner, Card } from "react-bootstrap";
+import { useNavigate } from "react-router-dom";
+
+const API_URL_VENTES = "http://localhost:3000/api/vente-boissons";
+const API_URL_BOISSONS = "http://localhost:3000/api/boissons";
+const API_URL_CLIENTS = "http://localhost:3000/api/clients";
+
+const VenteBoissons = () => {
+  const [ventes, setVentes] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [boissons, setBoissons] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [show, setShow] = useState(false);
+  const [formData, setFormData] = useState({ client_id: "", boisson_id: "", quantite: 1 });
+
+  // États pour les rapports
+  const [dailyReport, setDailyReport] = useState(null);
+  const [monthlyReport, setMonthlyReport] = useState(null);
+  const [reportDate, setReportDate] = useState("");
+  const [reportYear, setReportYear] = useState("");
+  const [reportMonth, setReportMonth] = useState("");
+
+
+  // États pour la pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      const [resClients, resBoissons, resVentes] = await Promise.all([
+        axios.get(API_URL_CLIENTS),
+        axios.get(API_URL_BOISSONS),
+        axios.get(API_URL_VENTES)
+      ]);
+      setClients(resClients.data);
+      setBoissons(resBoissons.data);
+      setVentes(resVentes.data);
+    } catch (error) {
+      console.error("Erreur de chargement", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleShow = () => {
+    setFormData({ client_id: "", boisson_id: "", quantite: 1 });
+    setShow(true);
+  };
+
+  const handleClose = () => setShow(false);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async () => {
+    try {
+      await axios.post(API_URL_VENTES, formData);
+      alert("Vente ajoutée avec succès !");
+      handleClose();
+      fetchData();
+    } catch (error) {
+      console.error("Erreur lors de l'ajout", error);
+      alert("Erreur lors de l'ajout");
+    }
+  };
+
+  const fetchDailyReport = async () => {
+    try {
+      const response = await axios.get(`${API_URL_VENTES}/rapports/journalier/${reportDate}`);
+      setDailyReport(response.data);
+    } catch (error) {
+      console.error("Erreur lors de la récupération du rapport journalier", error);
+      alert("Erreur lors de la récupération du rapport journalier");
+    }
+  };
+
+  const fetchMonthlyReport = async () => {
+    try {
+      const response = await axios.get(`${API_URL_VENTES}/rapports/mensuel/${reportYear}/${reportMonth}`);
+      setMonthlyReport(response.data);
+    } catch (error) {
+      console.error("Erreur lors de la récupération du rapport mensuel", error);
+      alert("Erreur lors de la récupération du rapport mensuel");
+    }
+  };
+
+  
+  const navigate = useNavigate();
+
+  return (
+    <div className="container mt-4">
+      <h2>Ventes de Boissons</h2>
+      <div className="d-flex gap-2 mb-3">
+        <Button variant="primary" onClick={handleShow}>
+          VENTE
+        </Button>
+        <Button variant="info" onClick={() => navigate("/boisson")}>
+          Voir les boissons
+        </Button>
+      </div>
+
+      {/* Section pour les rapports */}
+      <Card className="mb-4">
+        <Card.Body>
+          <h5>Rapports</h5>
+          <div className="mb-3">
+            <label>Rapport Journalier</label>
+            <input
+              type="date"
+              value={reportDate}
+              onChange={(e) => setReportDate(e.target.value)}
+              className="form-control"
+            />
+            <Button onClick={fetchDailyReport} className="mt-2">
+              Générer Rapport Journalier
+            </Button>
+            {dailyReport && (
+              <div className="mt-3">
+                <p><strong>Jour :</strong> {dailyReport.jour}</p>
+                <p><strong>Total des ventes :</strong> {dailyReport.total_ventes} €</p>
+              </div>
+            )}
+          </div>
+          <div>
+            <label>Rapport Mensuel</label>
+            <div className="d-flex gap-2">
+              <input
+                type="number"
+                placeholder="Année"
+                value={reportYear}
+                onChange={(e) => setReportYear(e.target.value)}
+                className="form-control"
+              />
+              <input
+                type="number"
+                placeholder="Mois"
+                value={reportMonth}
+                onChange={(e) => setReportMonth(e.target.value)}
+                className="form-control"
+              />
+            </div>
+            <Button onClick={fetchMonthlyReport} className="mt-2">
+              Générer Rapport Mensuel
+            </Button>
+            {monthlyReport && (
+              <div className="mt-3">
+                <p><strong>Mois :</strong> {new Date(monthlyReport.mois).toLocaleDateString()}</p>
+                <p><strong>Total des ventes :</strong> {monthlyReport.total_ventes} €</p>
+              </div>
+            )}
+          </div>
+        </Card.Body>
+      </Card>
+
+      {loading ? <Spinner animation="border" /> : (
+        <Table striped bordered hover className="mt-3">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Client</th>
+              <th>Boisson</th>
+              <th>Quantité</th>
+              <th>Montant (€)</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ventes.map((vente, index) => (
+              <tr key={vente.id}>
+                <td>{index + 1}</td>
+                <td>{clients.find((c) => c.id === vente.client_id)?.nom || "N/A"}</td>
+                <td>{boissons.find((b) => b.id === vente.boisson_id)?.nom || "N/A"}</td>
+                <td>{vente.quantite}</td>
+                <td>{vente.montant_total} €</td>
+                <td>{vente.date_vente}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+
+      <Modal show={show} onHide={handleClose}>
+        <Modal.Header closeButton>
+          <Modal.Title>Nouvelle Vente</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form>
+            <Form.Group>
+              <Form.Label>Client</Form.Label>
+              <Form.Control as="select" name="client_id" onChange={handleChange}>
+                {clients.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+              </Form.Control>
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Boisson</Form.Label>
+              <Form.Control as="select" name="boisson_id" onChange={handleChange}>
+                {boissons.map((b) => <option key={b.id} value={b.id}>{b.nom}</option>)}
+              </Form.Control>
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Quantité</Form.Label>
+              <Form.Control type="number" name="quantite" min="1" onChange={handleChange} />
+            </Form.Group>
+          </Form>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button onClick={handleSubmit}>Valider</Button>
+        </Modal.Footer>
+      </Modal>
+    </div>
+  );
+};
+
+export default VenteBoissons;
+
+
+rapport : 
+
+import React, { useState, useEffect } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell } from "recharts";
+import axios from "axios";
+import { Container, Row, Col, Form, Spinner } from "react-bootstrap";
+
+axios.defaults.baseURL = "http://localhost:3000";
+
+const RapportVente = () => {
+  const [loading, setLoading] = useState(true);
+  const [month, setMonth] = useState(new Date().getMonth() + 1); // Mois actuel
+  const [year, setYear] = useState(new Date().getFullYear()); // Année actuelle
+  const [mostSold, setMostSold] = useState([]); // Boissons les plus vendues
+  const [salesEvolution, setSalesEvolution] = useState([]); // Évolution mensuelle des ventes
+  const [dailyReport, setDailyReport] = useState(null); // Rapport journalier
+  const [monthlyReport, setMonthlyReport] = useState(null); // Rapport mensuel
+
+  // Couleurs pour les graphiques
+  const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#AF19FF"];
+
+  // Récupérer les données des boissons les plus vendues
+  const fetchMostSoldByMonth = async () => {
+    try {
+      const response = await axios.get(`/api/vente-boissons/boissons-plus-vendues/${month}/${year}`);
+      setMostSold(response.data);
+    } catch (error) {
+      console.error("Erreur lors de la récupération des boissons les plus vendues :", error);
+    }
+  };
+
+  // Récupérer l'évolution mensuelle des ventes
+  const fetchMonthlySalesEvolution = async () => {
+    try {
+      const response = await axios.get(`/api/vente-boissons/evolution-ventes/${year}`);
+      setSalesEvolution(response.data);
+    } catch (error) {
+      console.error("Erreur lors de la récupération de l'évolution mensuelle des ventes :", error);
+    }
+  };
+
+  // Récupérer le rapport journalier
+  const fetchDailyReport = async (date) => {
+    try {
+      const response = await axios.get(`/api/vente-boissons/rapports/journalier/${date}`);
+      setDailyReport(response.data);
+    } catch (error) {
+      console.error("Erreur lors de la récupération du rapport journalier :", error);
+    }
+  };
+
+  // Récupérer le rapport mensuel
+  const fetchMonthlyReport = async () => {
+    try {
+      const response = await axios.get(`/api/vente-boissons/rapport-mensuel/${year}/${month}`);
+      setMonthlyReport(response.data);
+    } catch (error) {
+      console.error("Erreur lors de la récupération du rapport mensuel :", error);
+    }
+  };
+
+  // Charger les données au montage du composant
+  useEffect(() => {
+    const fetchData = async () => {
+      await fetchMostSoldByMonth();
+      await fetchMonthlySalesEvolution();
+      await fetchMonthlyReport();
+      setLoading(false);
+    };
+    fetchData();
+  }, [month, year]);
+
+  // Gérer le changement de mois ou d'année
+  const handleMonthChange = (e) => {
+    setMonth(parseInt(e.target.value));
+  };
+
+  const handleYearChange = (e) => {
+    setYear(parseInt(e.target.value));
+  };
+
+  // Gérer le changement de date pour le rapport journalier
+  const handleDailyReportDateChange = (e) => {
+    const date = e.target.value;
+    fetchDailyReport(date);
+  };
+
+  if (loading) {
+    return (
+      <Container className="text-center mt-5">
+        <Spinner animation="border" role="status">
+          <span className="visually-hidden">Chargement...</span>
+        </Spinner>
+      </Container>
+    );
+  }
+
+  return (
+    <Container className="mt-4">
+      <h1 className="text-center mb-4">Rapports de Ventes</h1>
+
+      {/* Sélecteurs pour le mois et l'année */}
+      <Row className="mb-4">
+        <Col md={6}>
+          <Form.Group>
+            <Form.Label>Mois</Form.Label>
+            <Form.Control as="select" value={month} onChange={handleMonthChange}>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {new Date(0, i).toLocaleString("default", { month: "long" })}
+                </option>
+              ))}
+            </Form.Control>
+          </Form.Group>
+        </Col>
+        <Col md={6}>
+          <Form.Group>
+            <Form.Label>Année</Form.Label>
+            <Form.Control type="number" value={year} onChange={handleYearChange} />
+          </Form.Group>
+        </Col>
+      </Row>
+
+      {/* Boissons les plus vendues */}
+      <Row className="mb-4">
+        <Col>
+          <h3>Boissons les plus vendues</h3>
+          <BarChart width={600} height={300} data={mostSold}>
+            <XAxis dataKey="nom" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="total_ventes" fill="#8884d8" />
+          </BarChart>
+        </Col>
+      </Row>
+
+      {/* Évolution mensuelle des ventes */}
+      <Row className="mb-4">
+        <Col>
+          <h3>Évolution mensuelle des ventes</h3>
+          <BarChart width={600} height={300} data={salesEvolution}>
+            <XAxis dataKey="month" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="total" fill="#82ca9d" />
+          </BarChart>
+        </Col>
+      </Row>
+
+      {/* Rapport journalier */}
+      <Row className="mb-4">
+        <Col>
+          <h3>Rapport journalier</h3>
+          <Form.Group>
+            <Form.Label>Date</Form.Label>
+            <Form.Control type="date" onChange={handleDailyReportDateChange} />
+          </Form.Group>
+          {dailyReport && (
+            <div>
+              <p>Total des ventes : {dailyReport.total_ventes} €</p>
+            </div>
+          )}
+        </Col>
+      </Row>
+
+      {/* Rapport mensuel */}
+      <Row className="mb-4">
+        <Col>
+          <h3>Rapport mensuel</h3>
+          {monthlyReport && (
+            <div>
+              <p>Total des ventes : {monthlyReport.total_ventes} €</p>
+            </div>
+          )}
+        </Col>
+      </Row>
+    </Container>
+  );
+};
+
+export default RapportVente;
+
+
+  
+  async getMostSoldByMonth(month, year) {
+    const result = await pool.query(
+      `SELECT b.nom, SUM(vb.quantite) AS total_ventes
+       FROM ventes_boissons vb
+       JOIN boissons b ON vb.boisson_id = b.id
+       WHERE EXTRACT(MONTH FROM vb.date_vente) = $1 AND EXTRACT(YEAR FROM vb.date_vente) = $2
+       GROUP BY b.nom
+       ORDER BY total_ventes DESC
+       LIMIT 5`,
+      [month, year]
+    );
+    return result.rows;
+  },

@@ -1,0 +1,67 @@
+import StockService from '../service/stock.service.js';  // Importation du service stock
+  // Importation de Request et Response d'Express
+
+class StockController {
+    // Récupérer tout le stock
+    async getAllStocks(req, res) {
+        try {
+            const stocks = await StockService.getAllStocks();  // Appel à la méthode du service
+            res.status(200).json(stocks);  // Répondre avec les stocks récupérés
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: error.message });  // Répondre avec une erreur si nécessaire
+        }
+    }
+
+    // Récupérer le stock d'un produit spécifique
+    async getStockByProductId(req, res) {
+        const produit_id = req.params.id;  // Récupérer l'ID du produit depuis les paramètres de la requête
+        try {
+            const stock = await StockService.getStockByProductId(produit_id);  // Appel à la méthode du service
+            res.status(200).json(stock);  // Répondre avec le stock du produit
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: error.message });  // Répondre avec une erreur si nécessaire
+        }
+    }
+
+    // Créer un nouveau stock
+    async createStock(req, res) {
+        const { produit_id, quantity, threshold } = req.body;  // Récupérer les données du corps de la requête
+        try {
+            const newStock = await StockService.createStock(produit_id, quantity, threshold);  // Appel au service
+            res.status(201).json(newStock);  // Répondre avec le nouveau stock créé
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: error.message });  // Répondre avec une erreur si nécessaire
+        }
+    }
+
+    // Mettre à jour un stock existant
+    async updateStock(req, res) {
+        const produit_id = req.params.id;  // Récupérer l'ID du produit depuis les paramètres de la requête
+        const { newQuantity } = req.body;  // Récupérer la nouvelle quantité depuis le corps de la requête
+        try {
+            const updatedStock = await StockService.updateStock(produit_id, newQuantity);  // Appel au service
+            res.status(200).json(updatedStock);  // Répondre avec le stock mis à jour
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: error.message });  // Répondre avec une erreur si nécessaire
+        }
+    }
+
+    // Supprimer un stock
+    async deleteStock(req, res) {
+        const produit_id = req.params.id;  // Récupérer l'ID du produit depuis les paramètres de la requête
+        try {
+            await StockService.deleteStock(produit_id);  // Appel au service pour supprimer le stock
+            res.status(200).json({ message: 'Stock supprimé avec succès.' });  // Répondre avec un message de succès
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: error.message });  // Répondre avec une erreur si nécessaire
+        }
+    }
+}
+
+export default new StockController();  // Exportation de l'instance du contrôleur
+
