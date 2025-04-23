@@ -1,238 +1,436 @@
-import { useState, useEffect } from 'react';
-import axios from 'axios';
-import 'bootstrap/dist/css/bootstrap.min.css';
-import { FaPowerOff } from 'react-icons/fa'; // Icône de bouton d'allumage
+import { useEffect, useState } from "react";
+import axios from "axios";
+import {
+  Table,
+  Button,
+  Form,
+  Modal,
+  Spinner,
+  FormCheck,
+} from "react-bootstrap";
+import {
+  FileEarmarkArrowDown,
+  PlusCircle,
+  ExclamationTriangle,
+  Moon,
+  Sun,
+  CheckCircle,
+} from "react-bootstrap-icons";
 
-function App() {
-  const [products, setProducts] = useState([]);
-  const [product, setProduct] = useState({
-    id: '',
-    name: '',
-    price: '',
-    description: '',
-    category: 'Bière',
-  });
-  const [isEditing, setIsEditing] = useState(false);
+export default function StockDashboard() {
+  const [stocks, setStocks] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [productsMap, setProductsMap] = useState({});
+  const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [alertMessage, setAlertMessage] = useState('');
-  const [backgroundColor, setBackgroundColor] = useState('white'); // Etat pour changer la couleur de fond
+  const [darkMode, setDarkMode] = useState(false);
+  const [movement, setMovement] = useState({ productId: "", quantity: 0, type: "entry" });
+  const [search, setSearch] = useState("");
+  const [lastUpdated, setLastUpdated] = useState(null);
 
-  // Récupérer tous les produits
+  const fetchStocks = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get("http://localhost:5001/api/stock");
+      setStocks(res.data);
+      setLastUpdated(new Date().toLocaleString());
+    } catch (err) {
+      console.error("Erreur lors de la récupération des stocks :", err);
+    }
+    setLoading(false);
+  };
+
   const fetchProducts = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/produits');
-      setProducts(response.data);
-    } catch (error) {
-      console.error('Erreur lors de la récupération des produits:', error);
-    }
-  };
-
-  // Ajouter ou modifier un produit
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      if (isEditing) {
-        const response = await axios.put(
-          `http://localhost:5000/api/produits/${product.id}`,
-          product
-        );
-        setAlertMessage('Produit modifié avec succès!');
-      } else {
-        const response = await axios.post('http://localhost:5000/api/produits', product);
-        setAlertMessage('Produit ajouté avec succès!');
-      }
-      setProduct({
-        id: '',
-        name: '',
-        price: '',
-        description: '',
-        category: 'Bière',
+      const res = await axios.get("http://localhost:5000/api/products"); // Microservice Produits
+      const map = {};
+      res.data.forEach((product) => {
+        map[product.id] =  product.nom || product.name || "Produit inconnu";
       });
-      setIsEditing(false);
-      setShowModal(true);
-      fetchProducts();
-    } catch (error) {
-      console.error('Erreur lors de l\'ajout ou de la modification du produit:', error);
-      setAlertMessage('Erreur lors de l\'ajout ou de la modification du produit');
-      setShowModal(true);
+      setProductsMap(map);
+    } catch (err) {
+      console.error("Erreur lors de la récupération des produits :", err);
     }
   };
 
-  // Gérer les changements dans le formulaire
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setProduct({ ...product, [name]: value });
-  };
-
-  // Modifier un produit
-  const handleEdit = (prod) => {
-    setProduct(prod);
-    setIsEditing(true);
-  };
-
-  // Supprimer un produit
-  const handleDelete = async (id) => {
+  const fetchAlerts = async () => {
     try {
-      await axios.delete(`http://localhost:5000/api/produits/${id}`);
-      setAlertMessage('Produit supprimé avec succès!');
-      setShowModal(true);
-      fetchProducts();
-    } catch (error) {
-      console.error('Erreur lors de la suppression du produit:', error);
-      setAlertMessage('Erreur lors de la suppression du produit');
-      setShowModal(true);
+      const res = await axios.get("http://localhost:5001/api/stock/alerts/list");
+      setAlerts(res.data);
+    } catch (err) {
+      console.error("Erreur lors de la récupération des alertes :", err);
     }
   };
 
-  // Charger les produits lors du premier rendu
+  const handleMovementSubmit = async () => {
+    const endpoint =
+      movement.type === "entry"
+        ? "http://localhost:5001/api/stock/entry"
+        : "http://localhost:5001/api/stock/exit";
+
+    try {
+      await axios.post(endpoint, {
+        product_id: parseInt(movement.productId),
+        quantity: parseInt(movement.quantity),
+      });
+      setShowModal(false);
+      fetchStocks();
+      fetchAlerts();
+    } catch (err) {
+      console.error("Erreur lors de l'envoi du mouvement :", err);
+    }
+  };
+
+  const exportHistory = () => {
+    window.open("http://localhost:5001/api/stock/history/export", "_blank");
+  };
+
   useEffect(() => {
+    fetchStocks();
     fetchProducts();
+    fetchAlerts();
   }, []);
 
-  // Fonction pour changer le fond de l'application
-  const toggleBackgroundColor = () => {
-    setBackgroundColor(backgroundColor === 'white' ? 'black' : 'white');
-  };
+  const filteredStocks = stocks.filter((s) =>
+    s.product_id.toString().includes(search) ||
+    productsMap[s.product_id]?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const isLowStock = (productId) => alerts.some((a) => a.product_id === productId);
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        backgroundColor: backgroundColor,
-        color: backgroundColor === 'white' ? 'black' : 'white',
-        paddingTop: '20px',
-      }}
-    >
-      {/* Bouton circulaire pour changer la couleur de fond */}
-      <button
-        onClick={toggleBackgroundColor}
-        style={{
-          position: 'absolute',
-          top: '20px',
-          left: '20px',
-          zIndex: 1000,
-          backgroundColor: '#f1f1f1',
-          border: 'none',
-          borderRadius: '50%',
-          padding: '10px',
-          fontSize: '20px',
-          cursor: 'pointer',
-          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-        }}
-      >
-        <FaPowerOff />
-      </button>
-
-      <div className="container mt-5">
-        <h1 className="text-center mb-5">{isEditing ? 'Modifier un produit' : 'Ajouter un produit'}</h1>
-
-        {/* Formulaire d'ajout ou modification de produit */}
-        <form onSubmit={handleSubmit} className="shadow p-4 rounded bg-light">
-          <div className="mb-3">
-            <label htmlFor="name" className="form-label">Nom du produit</label>
-            <input
-              type="text"
-              className="form-control"
-              id="name"
-              name="name"
-              value={product.name}
-              onChange={handleChange}
-              required
-            />
-          </div>
-          <div className="mb-3">
-            <label htmlFor="price" className="form-label">Prix</label>
-            <input
-              type="number"
-              className="form-control"
-              id="price"
-              name="price"
-              value={product.price}
-              onChange={handleChange}
-              required
-            />
-          </div>
-          <div className="mb-3">
-            <label htmlFor="description" className="form-label">Description</label>
-            <textarea
-              className="form-control"
-              id="description"
-              name="description"
-              value={product.description}
-              onChange={handleChange}
-              placeholder="Description du produit"
-            ></textarea>
-          </div>
-          <div className="mb-3">
-            <label htmlFor="category" className="form-label">Catégorie</label>
-            <select
-              className="form-select"
-              id="category"
-              name="category"
-              value={product.category}
-              onChange={handleChange}
-            >
-              <option value="Bière">Bière</option>
-              <option value="Jus">Jus</option>
-              <option value="Canette">Canette</option>
-            </select>
-          </div>
-          <button type="submit" className="btn btn-success btn-lg w-100">
-            {isEditing ? 'Mettre à jour' : 'Ajouter le produit'}
-          </button>
-        </form>
-
-        {/* Modal d'alerte */}
-        {showModal && (
-          <div className="modal fade show" style={{ display: 'block' }} tabIndex="-1" aria-labelledby="alertModalLabel" aria-hidden="true">
-            <div className="modal-dialog">
-              <div className="modal-content">
-                <div className="modal-header">
-                  <h5 className="modal-title" id="alertModalLabel">Notification</h5>
-                  <button type="button" className="btn-close" onClick={() => setShowModal(false)}></button>
-                </div>
-                <div className="modal-body">{alertMessage}</div>
-                <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Fermer</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Liste des produits */}
-        <h2 className="text-center mt-5 mb-3">Produits</h2>
-        <div className="row">
-          {products.map((prod) => (
-            <div className="col-md-4 mb-4" key={prod.id}>
-              <div className="card shadow-sm">
-                <div className="card-body">
-                  <h5 className="card-title">{prod.name}</h5>
-                  <p className="card-text">{prod.description}</p>
-                  <p className="card-text"><strong>Prix :</strong> {prod.price}FCFA</p>
-                  <p className="card-text"><strong>Catégorie :</strong> {prod.category}</p>
-                  <div className="d-flex justify-content-between">
-                    <button
-                      className="btn btn-warning btn-sm"
-                      onClick={() => handleEdit(prod)}
-                    >
-                      Modifier
-                    </button>
-                    <button
-                      className="btn btn-danger btn-sm"
-                      onClick={() => handleDelete(prod.id)}
-                    >
-                      Supprimer
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+    <div className={`container py-5 ${darkMode ? "bg-dark text-light" : ""}`}>
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h2>📦 Gestion du Stock</h2>
+        <FormCheck
+          type="switch"
+          id="dark-mode"
+          label={darkMode ? <><Sun className="me-1" /> Light Mode</> : <><Moon className="me-1" /> Dark Mode</>}
+          onChange={() => setDarkMode(!darkMode)}
+        />
       </div>
+
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <Button variant="success" onClick={() => setShowModal(true)} className="me-2">
+            <PlusCircle className="me-2" /> Mouvement Stock
+          </Button>
+          <Button variant="outline-primary" onClick={exportHistory}>
+            <FileEarmarkArrowDown className="me-2" /> Exporter Historique
+          </Button>
+        </div>
+        <Form.Control
+          type="text"
+          placeholder="🔍 Rechercher par ID ou nom"
+          style={{ maxWidth: "300px" }}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
+      {lastUpdated && (
+        <div className={`mb-3 small ${darkMode ? "text-secondary" : "text-muted"}`}>
+          Dernière mise à jour : {lastUpdated}
+        </div>
+      )}
+
+      {alerts.length > 0 && (
+        <div className="alert alert-warning">
+          <ExclamationTriangle className="me-2" />
+          Stock faible pour : {alerts.map((a) => a.product_id).join(", ")}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center mt-5">
+          <Spinner animation="border" variant={darkMode ? "light" : "primary"} />
+          <div>Chargement des stocks...</div>
+        </div>
+      ) : (
+        <Table bordered hover responsive variant={darkMode ? "dark" : "light"}>
+          <thead>
+            <tr>
+              <th>ID Produit</th>
+              <th>Nom du Produit</th>
+             
+              <th>Quantité Disponible</th>
+              <th>Seuil de Stock</th>
+              <th>État</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredStocks.map((stock, index) => {
+              const low = isLowStock(stock.product_id);
+              return (
+                <tr
+                  key={index}
+                  className={low ? "table-danger" : "table-success"}
+                >
+                  <td>{stock.product_id}</td>
+                  <td>{productsMap[stock.product_id] || "Nom inconnu"}</td>
+                  <td>{stock.quantity_available}</td>
+                  <td>{stock.stock_threshold}</td>
+                  <td>
+                    {low ? (
+                      <ExclamationTriangle className="text-danger" />
+                    ) : (
+                      <CheckCircle className="text-success" />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      )}
+
+      {/* Modal de mouvement */}
+      <Modal show={showModal} onHide={() => setShowModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Ajouter un Mouvement</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form>
+            <Form.Group className="mb-3">
+              <Form.Label>ID Produit</Form.Label>
+              <Form.Control
+                type="text"
+                value={movement.productId}
+                onChange={(e) => setMovement({ ...movement, productId: e.target.value })}
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Quantité</Form.Label>
+              <Form.Control
+                type="number"
+                value={movement.quantity}
+                onChange={(e) =>
+                  setMovement({ ...movement, quantity: parseInt(e.target.value) || 0 })
+                }
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Type de Mouvement</Form.Label>
+              <Form.Select
+                value={movement.type}
+                onChange={(e) => setMovement({ ...movement, type: e.target.value })}
+              >
+                <option value="entry">Entrée</option>
+                <option value="exit">Sortie</option>
+              </Form.Select>
+            </Form.Group>
+          </Form>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowModal(false)}>
+            Annuler
+          </Button>
+          <Button variant="primary" onClick={handleMovementSubmit}>
+            Enregistrer
+          </Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   );
 }
+
+
+//app.jsx sans login :
+
+import React, { Suspense } from 'react';
+import { BrowserRouter as Router, Route, Routes, Link } from 'react-router-dom';
+import 'bootstrap/dist/css/bootstrap.min.css';
+
+// Composants chargés de manière paresseuse pour mieux capturer les erreurs
+const StockDashboard = React.lazy(() => import('./components/StockDashboard'));
+const Mouvement = React.lazy(() => import('./components/Mouvement'));
+
+const ErrorBoundary = ({ children }) => {
+  const [hasError, setHasError] = React.useState(false);
+
+  React.useEffect(() => {
+    const errorHandler = (error) => {
+      console.error('Error caught:', error);
+      setHasError(true);
+    };
+    window.addEventListener('error', errorHandler);
+    return () => window.removeEventListener('error', errorHandler);
+  }, []);
+
+  if (hasError) {
+    return (
+      <div className="alert alert-danger m-4">
+        Une erreur est survenue. Veuillez recharger la page.
+      </div>
+    );
+  }
+
+  return children;
+};
+
+const App = () => {
+  return (
+    <Router>
+      <ErrorBoundary>
+        <div className="container-fluid px-0">
+          <nav className="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+            <div className="container">
+              <Link to="/" className="navbar-brand">Gestion de Stock</Link>
+              <div className="navbar-nav">
+                <Link to="/" className="nav-link">Dashboard</Link>
+                <Link to="/Mouvement" className="nav-link">Alertes</Link>
+              </div>
+            </div>
+          </nav>
+
+          <main className="container">
+            <Suspense fallback={<div className="text-center my-5">Chargement en cours...</div>}>
+              <Routes>
+                <Route path="/" element={<StockDashboard />} />
+                <Route path="/Mouvement" element={<Mouvement />} />
+              </Routes>
+            </Suspense>
+          </main>
+        </div>
+      </ErrorBoundary>
+    </Router>
+  );
+};
+
+export default App;
+// APP AVEC LOGIN
+
+import React, { Suspense, useState } from 'react';
+import { BrowserRouter as Router, Route, Routes, Link, Navigate } from 'react-router-dom';
+import 'bootstrap/dist/css/bootstrap.min.css';
+import { FiBarChart2, FiBell, FiLogOut, FiMenu } from 'react-icons/fi';
+
+// Composants chargés de manière paresseuse
+const StockDashboard = React.lazy(() => import('./components/StockDashboard'));
+const Mouvement = React.lazy(() => import('./components/Mouvement'));
+const Login = React.lazy(() => import('./components/Login'));
+
+const ErrorBoundary = ({ children }) => {
+  const [hasError, setHasError] = React.useState(false);
+
+  React.useEffect(() => {
+    const errorHandler = (error) => {
+      console.error('Error caught:', error);
+      setHasError(true);
+    };
+    window.addEventListener('error', errorHandler);
+    return () => window.removeEventListener('error', errorHandler);
+  }, []);
+
+  if (hasError) {
+    return <div className="alert alert-danger m-4">Une erreur est survenue.</div>;
+  }
+
+  return children;
+};
+
+const ProtectedRoute = ({ isAuthenticated, children }) => {
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+};
+
+const Layout = ({ children, handleLogout }) => {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  return (
+    <div className="container-fluid">
+      <div className="row">
+        {/* Sidebar */}
+        <div className={`col-md-3 col-lg-2 d-md-block bg-dark sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}
+             style={{ minHeight: '100vh', transition: 'all 0.3s' }}>
+          <div className="position-sticky pt-3">
+            <div className="d-flex justify-content-between align-items-center px-3 mb-4">
+              {!sidebarCollapsed && <span className="fs-4 text-white">H-Stock</span>}
+              <button 
+                className="btn btn-link text-white"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              >
+                <FiMenu size={20} />
+              </button>
+            </div>
+            <ul className="nav flex-column">
+              <li className="nav-item">
+                <Link to="/" className="nav-link text-white d-flex align-items-center">
+                  <FiBarChart2 className="me-2" />
+                  {!sidebarCollapsed && <span>Dashboard</span>}
+                </Link>
+              </li>
+              <li className="nav-item">
+                <Link to="/Mouvement" className="nav-link text-white d-flex align-items-center">
+                  <FiBell className="me-2" />
+                  {!sidebarCollapsed && <span>Alertes</span>}
+                </Link>
+              </li>
+              <li className="nav-item mt-4">
+                <button 
+                  onClick={handleLogout} 
+                  className="btn btn-link nav-link text-white d-flex align-items-center"
+                >
+                  <FiLogOut className="me-2" />
+                  {!sidebarCollapsed && <span>Déconnexion</span>}
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Main content */}
+        <main className={`col-md-9 ms-sm-auto col-lg-10 px-md-4 ${sidebarCollapsed ? 'col-md-12' : ''}`}>
+          <div className="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+            <button 
+              className="btn btn-outline-secondary d-md-none me-2" 
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
+              <FiMenu />
+            </button>
+            <h1 className="h2">H-Stock</h1>
+          </div>
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+};
+
+const App = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+  };
+
+  return (
+    <Router>
+      <ErrorBoundary>
+        <Suspense fallback={<div className="text-center my-5">Chargement en cours...</div>}>
+          <Routes>
+            <Route path="/login" element={<Login onLogin={handleLogin} />} />
+            <Route path="/*" element={
+              <ProtectedRoute isAuthenticated={isAuthenticated}>
+                <Layout handleLogout={handleLogout}>
+                  <Routes>
+                    <Route path="/" element={<StockDashboard />} />
+                    <Route path="/Mouvement" element={<Mouvement />} />
+                  </Routes>
+                </Layout>
+              </ProtectedRoute>
+            } />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
+    </Router>
+  );
+};
 
 export default App;

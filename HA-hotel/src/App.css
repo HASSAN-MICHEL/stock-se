@@ -5,6 +5,62 @@
   text-align: center;
 }
 
+/* Dark mode styles */
+body.dark-mode {
+  background-color: #121212;
+  color: #ffffff;
+}
+
+body.dark-mode .card,
+body.dark-mode .modal-content,
+body.dark-mode .dropdown-menu {
+  background-color: #1e1e1e;
+  color: #ffffff;
+}
+
+body.dark-mode .table {
+  color: #ffffff;
+}
+
+body.dark-mode .table-hover tbody tr:hover {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.075);
+}
+
+/* Override Bootstrap primary color */
+:root {
+  --bs-primary: #0d6efd;
+}
+
+.btn-primary {
+  background-color: var(--bs-primary);
+  border-color: var(--bs-primary);
+}
+
+.btn-primary:hover {
+  background-color: var(--bs-primary);
+  border-color: var(--bs-primary);
+  filter: brightness(90%);
+}
+
+.bg-primary {
+  background-color: var(--bs-primary) !important;
+}
+
+.text-primary {
+  color: var(--bs-primary) !important;
+}
+
+.badge.bg-primary {
+  background-color: var(--bs-primary) !important;
+}
+
+/* Sidebar styles */
+.sidebar {
+  background-color: var(--bs-primary);
+}
+
+
 .logo {
   height: 6em;
   padding: 1.5em;

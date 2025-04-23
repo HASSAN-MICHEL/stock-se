@@ -7,7 +7,9 @@ import Stock from '../models/stock.js';
 import StockHistory from '../models/StockHistory.js';
 import cors from 'cors';
 
+
 const app = express();
+
 const PORT = 5001;
 
 // Middlewares

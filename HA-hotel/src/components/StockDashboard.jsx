@@ -1,235 +1,251 @@
-import { useEffect, useState } from "react";
-import axios from "axios";
-import {
-  Table,
-  Button,
-  Form,
-  Modal,
-  Spinner,
-  FormCheck,
-} from "react-bootstrap";
-import {
-  FileEarmarkArrowDown,
-  PlusCircle,
-  ExclamationTriangle,
-  Moon,
-  Sun,
-  CheckCircle,
-} from "react-bootstrap-icons";
+import React, { useState, useEffect } from 'react';
+import { Card, Row, Col, Table, Badge, Spinner, Alert } from 'react-bootstrap';
+import { 
+  FiAlertTriangle, FiPackage, FiTrendingUp, FiTrendingDown, 
+  FiClock, FiAlertCircle, FiDatabase 
+} from 'react-icons/fi';
+import axios from 'axios';
 
 export default function StockDashboard() {
-  const [stocks, setStocks] = useState([]);
-  const [alerts, setAlerts] = useState([]);
-  const [productsMap, setProductsMap] = useState({});
+  const [dashboardData, setDashboardData] = useState({
+    alerts: [],
+    totalStock: 0,
+    todayEntries: 0,
+    todayExits: 0,
+    recentActivities: []
+  });
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
-  const [movement, setMovement] = useState({ productId: "", quantity: 0, type: "entry" });
-  const [search, setSearch] = useState("");
-  const [lastUpdated, setLastUpdated] = useState(null);
-
-  const fetchStocks = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get("http://localhost:5001/api/stock");
-      setStocks(res.data);
-      setLastUpdated(new Date().toLocaleString());
-    } catch (err) {
-      console.error("Erreur lors de la récupération des stocks :", err);
-    }
-    setLoading(false);
-  };
-
-  const fetchProducts = async () => {
-    try {
-      const res = await axios.get("http://localhost:5000/api/products"); // Microservice Produits
-      const map = {};
-      res.data.forEach((product) => {
-        map[product.id] =  product.nom || product.name || "Produit inconnu";
-      });
-      setProductsMap(map);
-    } catch (err) {
-      console.error("Erreur lors de la récupération des produits :", err);
-    }
-  };
-
-  const fetchAlerts = async () => {
-    try {
-      const res = await axios.get("http://localhost:5001/api/stock/alerts/list");
-      setAlerts(res.data);
-    } catch (err) {
-      console.error("Erreur lors de la récupération des alertes :", err);
-    }
-  };
-
-  const handleMovementSubmit = async () => {
-    const endpoint =
-      movement.type === "entry"
-        ? "http://localhost:5001/api/stock/entry"
-        : "http://localhost:5001/api/stock/exit";
-
-    try {
-      await axios.post(endpoint, {
-        product_id: parseInt(movement.productId),
-        quantity: parseInt(movement.quantity),
-      });
-      setShowModal(false);
-      fetchStocks();
-      fetchAlerts();
-    } catch (err) {
-      console.error("Erreur lors de l'envoi du mouvement :", err);
-    }
-  };
-
-  const exportHistory = () => {
-    window.open("http://localhost:5001/api/stock/history/export", "_blank");
-  };
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchStocks();
-    fetchProducts();
-    fetchAlerts();
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // 1. Fetch alerts
+        const alertsRes = await axios.get('http://localhost:5001/api/stock/alerts/list');
+        
+        // 2. Fetch basic stats
+        const statsRes = await axios.get('http://localhost:5001/api/stock/stats/basic');
+        
+        // 3. Fetch recent activities from history (using existing export route)
+        const historyRes = await axios.get('http://localhost:5001/api/stock/history/export');
+        
+        // Convert CSV string to JSON if needed
+        let historyData = historyRes.data;
+        if (typeof historyData === 'string') {
+          historyData = historyData.split('\n')
+            .slice(1) // skip header
+            .map(row => {
+              const [product_id, action, quantity, date] = row.split(',');
+              return { product_id, action, quantity: parseInt(quantity), date };
+            });
+        }
+
+        // Process data for today
+        const today = new Date().toISOString().split('T')[0];
+        const todayData = historyData.filter(item => item.date.includes(today));
+        
+        const todayEntries = todayData
+          .filter(item => item.action === 'entry')
+          .reduce((sum, item) => sum + item.quantity, 0);
+          
+        const todayExits = todayData
+          .filter(item => item.action === 'exit')
+          .reduce((sum, item) => sum + item.quantity, 0);
+
+        // Get 4 most recent activities
+        const recentActivities = [...historyData]
+          .sort((a, b) => new Date(b.date) - new Date(a.date))
+          .slice(0, 4);
+
+        setDashboardData({
+          alerts: alertsRes.data,
+          totalStock: statsRes.data.balance,
+          todayEntries,
+          todayExits,
+          recentActivities
+        });
+
+      } catch (err) {
+        console.error('Fetch error:', err);
+        setError(err.response?.data?.message || err.message || "Erreur de chargement");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardData();
   }, []);
 
-  const filteredStocks = stocks.filter((s) =>
-    s.product_id.toString().includes(search) ||
-    productsMap[s.product_id]?.toLowerCase().includes(search.toLowerCase())
-  );
+  if (loading) {
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ height: '50vh' }}>
+        <Spinner animation="border" variant="primary" />
+        <span className="ms-3">Chargement en cours...</span>
+      </div>
+    );
+  }
 
-  const isLowStock = (productId) => alerts.some((a) => a.product_id === productId);
+  if (error) {
+    return (
+      <Alert variant="danger" className="m-4">
+        <FiAlertTriangle className="me-2" />
+        {error}
+        <div className="mt-2">
+          <button 
+            onClick={() => window.location.reload()} 
+            className="btn btn-sm btn-outline-danger"
+          >
+            Réessayer
+          </button>
+        </div>
+      </Alert>
+    );
+  }
 
   return (
-    <div className={`container py-5 ${darkMode ? "bg-dark text-light" : ""}`}>
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2>📦 Gestion du Stock</h2>
-        <FormCheck
-          type="switch"
-          id="dark-mode"
-          label={darkMode ? <><Sun className="me-1" /> Light Mode</> : <><Moon className="me-1" /> Dark Mode</>}
-          onChange={() => setDarkMode(!darkMode)}
-        />
-      </div>
+    <div className="container py-4">
+      <h1 className="mb-4">
+        <FiPackage className="me-2" />
+        Tableau de bord du stock
+      </h1>
 
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <div>
-          <Button variant="success" onClick={() => setShowModal(true)} className="me-2">
-            <PlusCircle className="me-2" /> Mouvement Stock
-          </Button>
-          <Button variant="outline-primary" onClick={exportHistory}>
-            <FileEarmarkArrowDown className="me-2" /> Exporter Historique
-          </Button>
-        </div>
-        <Form.Control
-          type="text"
-          placeholder="🔍 Rechercher par ID ou nom"
-          style={{ maxWidth: "300px" }}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
+      {/* Summary Cards */}
+      <Row className="g-4 mb-4">
+        {/* Alerts Card */}
+        <Col md={3}>
+          <Card className="h-100 shadow-sm">
+            <Card.Body className="d-flex align-items-center">
+              <FiAlertTriangle size={32} className="text-danger me-3" />
+              <div>
+                <h6 className="text-muted mb-1">Alertes</h6>
+                <h3 className="mb-0">{dashboardData.alerts.length}</h3>
+                <small className="text-muted">Stock critique</small>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
 
-      {lastUpdated && (
-        <div className={`mb-3 small ${darkMode ? "text-secondary" : "text-muted"}`}>
-          Dernière mise à jour : {lastUpdated}
-        </div>
-      )}
+        {/* Total Stock Card */}
+        <Col md={3}>
+          <Card className="h-100 shadow-sm">
+            <Card.Body className="d-flex align-items-center">
+              <FiDatabase size={32} className="text-primary me-3" />
+              <div>
+                <h6 className="text-muted mb-1">Stock total</h6>
+                <h3 className="mb-0">{dashboardData.totalStock}</h3>
+                <small className="text-muted">Unités disponibles</small>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
 
-      {alerts.length > 0 && (
-        <div className="alert alert-warning">
-          <ExclamationTriangle className="me-2" />
-          Stock faible pour : {alerts.map((a) => a.product_id).join(", ")}
-        </div>
-      )}
+        {/* Today's Entries Card */}
+        <Col md={3}>
+          <Card className="h-100 shadow-sm">
+            <Card.Body className="d-flex align-items-center">
+              <FiTrendingUp size={32} className="text-success me-3" />
+              <div>
+                <h6 className="text-muted mb-1">Entrées</h6>
+                <h3 className="mb-0">{dashboardData.todayEntries}</h3>
+                <small className="text-muted">Aujourd'hui</small>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
 
-      {loading ? (
-        <div className="text-center mt-5">
-          <Spinner animation="border" variant={darkMode ? "light" : "primary"} />
-          <div>Chargement des stocks...</div>
-        </div>
-      ) : (
-        <Table bordered hover responsive variant={darkMode ? "dark" : "light"}>
-          <thead>
-            <tr>
-              <th>ID Produit</th>
-              <th>Nom du Produit</th>
-             
-              <th>Quantité Disponible</th>
-              <th>Seuil de Stock</th>
-              <th>État</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStocks.map((stock, index) => {
-              const low = isLowStock(stock.product_id);
-              return (
-                <tr
-                  key={index}
-                  className={low ? "table-danger" : "table-success"}
-                >
-                  <td>{stock.product_id}</td>
-                  <td>{productsMap[stock.product_id] || "Nom inconnu"}</td>
-                  <td>{stock.quantity_available}</td>
-                  <td>{stock.stock_threshold}</td>
-                  <td>
-                    {low ? (
-                      <ExclamationTriangle className="text-danger" />
-                    ) : (
-                      <CheckCircle className="text-success" />
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </Table>
-      )}
+        {/* Today's Exits Card */}
+        <Col md={3}>
+          <Card className="h-100 shadow-sm">
+            <Card.Body className="d-flex align-items-center">
+              <FiTrendingDown size={32} className="text-warning me-3" />
+              <div>
+                <h6 className="text-muted mb-1">Sorties</h6>
+                <h3 className="mb-0">{dashboardData.todayExits}</h3>
+                <small className="text-muted">Aujourd'hui</small>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
 
-      {/* Modal de mouvement */}
-      <Modal show={showModal} onHide={() => setShowModal(false)}>
-        <Modal.Header closeButton>
-          <Modal.Title>Ajouter un Mouvement</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form>
-            <Form.Group className="mb-3">
-              <Form.Label>ID Produit</Form.Label>
-              <Form.Control
-                type="text"
-                value={movement.productId}
-                onChange={(e) => setMovement({ ...movement, productId: e.target.value })}
-              />
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Quantité</Form.Label>
-              <Form.Control
-                type="number"
-                value={movement.quantity}
-                onChange={(e) =>
-                  setMovement({ ...movement, quantity: parseInt(e.target.value) || 0 })
-                }
-              />
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Type de Mouvement</Form.Label>
-              <Form.Select
-                value={movement.type}
-                onChange={(e) => setMovement({ ...movement, type: e.target.value })}
-              >
-                <option value="entry">Entrée</option>
-                <option value="exit">Sortie</option>
-              </Form.Select>
-            </Form.Group>
-          </Form>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowModal(false)}>
-            Annuler
-          </Button>
-          <Button variant="primary" onClick={handleMovementSubmit}>
-            Enregistrer
-          </Button>
-        </Modal.Footer>
-      </Modal>
+      {/* Recent Activity and Alerts */}
+      <Row className="g-4 mb-4">
+        <Col lg={8}>
+          <Card className="shadow-sm">
+            <Card.Header className="bg-light">
+              <h5 className="mb-0">
+                <FiClock className="me-2" />
+                Activité récente
+              </h5>
+            </Card.Header>
+            <Card.Body>
+              <Table striped hover responsive>
+                <thead>
+                  <tr>
+                    <th>Produit</th>
+                    <th>Type</th>
+                    <th>Quantité</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboardData.recentActivities.map((activity, index) => (
+                    <tr key={index}>
+                      <td>#{activity.product_id}</td>
+                      <td>
+                        <Badge bg={activity.action === 'entry' ? 'success' : 'warning'}>
+                          {activity.action === 'entry' ? 'Entrée' : 'Sortie'}
+                        </Badge>
+                      </td>
+                      <td>{activity.quantity}</td>
+                      <td>{new Date(activity.date).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </Card.Body>
+          </Card>
+        </Col>
+
+        <Col lg={4}>
+          <Card className="shadow-sm h-100">
+            <Card.Header className="bg-light">
+              <h5 className="mb-0">
+                <FiAlertCircle className="me-2" />
+                Alertes de stock
+              </h5>
+            </Card.Header>
+            <Card.Body>
+              {dashboardData.alerts.length > 0 ? (
+                <>
+                  <Alert variant="warning" className="d-flex align-items-center">
+                    <FiAlertTriangle className="me-2" />
+                    {dashboardData.alerts.length} produit(s) en alerte
+                  </Alert>
+                  <Table size="sm">
+                    <tbody>
+                      {dashboardData.alerts.slice(0, 3).map((alert, index) => (
+                        <tr key={index}>
+                          <td>#{alert.product_id}</td>
+                          <td>{alert.quantity_available} unités</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </>
+              ) : (
+                <Alert variant="success" className="d-flex align-items-center">
+                  <FiPackage className="me-2" />
+                  Aucune alerte de stock
+                </Alert>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
     </div>
   );
 }

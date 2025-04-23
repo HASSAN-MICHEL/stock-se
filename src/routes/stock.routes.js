@@ -7,3 +7,4 @@ router.post("/stocks", createStock); // Création de stock
 router.get("/stocks/:product_id", getStockByProductId); // Récupérer le stock d'un produit
 
 export default router;
+//kbvjbhv kr hcdvkl ;

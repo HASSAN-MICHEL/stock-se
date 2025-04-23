@@ -35,6 +35,44 @@ h1 {
   line-height: 1.1;
 }
 
+body.light {
+  --bg-color: #f8f9fa;
+  --text-color: #212529;
+  --sidebar-bg: #343a40;
+  --sidebar-text: #ffffff;
+}
+
+body.dark {
+  --bg-color: #212529;
+  --text-color: #f8f9fa;
+  --sidebar-bg: #121416;
+  --sidebar-text: #ffffff;
+}
+
+body.primary {
+  --bg-color: #e9f5ff;
+  --text-color: #084298;
+  --sidebar-bg: #084298;
+  --sidebar-text: #ffffff;
+}
+
+body.secondary {
+  --bg-color: #e2e3e5;
+  --text-color: #41464b;
+  --sidebar-bg: #41464b;
+  --sidebar-text: #ffffff;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}
+
+.sidebar {
+  background-color: var(--sidebar-bg);
+  color: var(--sidebar-text);
+}
+
 button {
   border-radius: 8px;
   border: 1px solid transparent;

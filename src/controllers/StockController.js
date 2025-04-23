@@ -3,31 +3,46 @@ import Stock from '../models/stock.js';
 import StockHistory from "../models/StockHistory.js";
 import axios from "axios";
 import { Parser } from "json2csv";
+import { Op, Sequelize } from 'sequelize';
+
 
 const PRODUCT_SERVICE_URL = "http://localhost:5000/api/products";
 
 const StockController = {
-    getStock: async (req, res) => {
-        try {
-          const stocks = await Stock.findAll();
-          const stocksWithNames = await Promise.all(
-            stocks.map(async (stock) => {
-              // Récupérer le nom du produit via l'ID produit
-              const productResponse = await axios.get(`${PRODUCT_SERVICE_URL}/${stock.product_id}`);
-              const productName = productResponse.data.name;  // Assurez-vous que la réponse contient le champ `name`
-              
-              return {
-                ...stock.dataValues,
-                product_name: productName,  // Ajouter le nom du produit à la réponse
-              };
-            })
-          );
-          res.json(stocksWithNames);  // Renvoie les stocks avec le nom des produits
-        } catch (err) {
-          console.error("Erreur lors de la récupération des stocks :", err);
-          res.status(500).json({ message: "Erreur interne lors de la récupération des stocks." });
-        }
-      },
+  getStock: async (req, res) => {
+    try {
+      console.log("Fetching all stocks...");  // Ajout pour debug
+      const stocks = await Stock.findAll();
+      
+      const stocksWithNames = await Promise.all(
+        stocks.map(async (stock) => {
+          try {
+            const productResponse = await axios.get(`${PRODUCT_SERVICE_URL}/${stock.product_id}`);
+            return {
+              ...stock.dataValues,
+              product_name: productResponse.data.name,
+            };
+          } catch (e) {
+            console.error(`Erreur produit ${stock.product_id}:`, e.message);
+            return {
+              ...stock.dataValues,
+              product_name: `Produit ${stock.product_id} (nom indisponible)`,
+            };
+          }
+        })
+      );
+      
+      console.log("Stocks to return:", stocksWithNames);  // Ajout pour debug
+      res.json(stocksWithNames);
+      
+    } catch (err) {
+      console.error("Erreur getStock:", err);
+      res.status(500).json({ 
+        message: "Erreur serveur",
+        details: err.message 
+      });
+    }
+},
 
   updateStock: async (req, res) => {
     const { product_id } = req.params;
@@ -89,6 +104,50 @@ const StockController = {
     }
   },
 
+  // Nouvelle méthode pour les statistiques de mouvements par période
+getMovementsStats: async (req, res) => {
+  try {
+      const { period = 'day' } = req.query;
+      
+      const stats = await StockHistory.findAll({
+          attributes: [
+              'action',
+              [sequelize.fn('SUM', sequelize.col('quantity')), 'total_quantity'],
+              [sequelize.fn('COUNT', sequelize.col('id')), 'count_operations'],
+              [sequelize.fn('DATE', sequelize.col('date')), 'date']
+          ],
+          where: {
+              date: {
+                  [Op.gte]: sequelize.literal(`DATE('now', 'start of ${period}')`)
+              }
+          },
+          group: ['action', 'date']
+      });
+      
+      res.json(stats);
+  } catch (err) {
+      console.error("Erreur stats mouvements:", err);
+      res.status(500).json({ message: "Erreur serveur" });
+  }
+},
+
+// Nouvelle méthode pour les mouvements récents
+getRecentMovements: async (req, res) => {
+  try {
+      const { limit = 4 } = req.query;
+      
+      const movements = await StockHistory.findAll({
+          order: [['date', 'DESC']],
+          limit: parseInt(limit)
+      });
+      
+      res.json(movements);
+  } catch (err) {
+      console.error("Erreur mouvements récents:", err);
+      res.status(500).json({ message: "Erreur serveur" });
+  }
+},
+
   stockExit: async (req, res) => {
     const { product_id, quantity } = req.body;
     const stock = await Stock.findOne({ where: { product_id } });
@@ -111,6 +170,73 @@ const StockController = {
     });
     res.json(lowStocks);
   },
+
+  
+  getFullProductHistory: async (req, res) => {
+      try {
+          const { product_id } = req.params;
+          
+          const history = await StockHistory.findAll({
+              where: { product_id },
+              order: [['date', 'DESC']]
+          });
+          
+          res.json(history);
+      } catch (err) {
+          console.error("Erreur historique produit:", err);
+          res.status(500).json({ message: "Erreur serveur" });
+      }
+  },
+
+  /**
+   * Nouvelle méthode - Mouvements récents (formatté pour l'affichage)
+   */
+  getFormattedMovements: async (req, res) => {
+      try {
+          const { limit = 100 } = req.query;
+          
+          const movements = await StockHistory.findAll({
+              order: [['date', 'DESC']],
+              limit: parseInt(limit)
+          });
+          
+          // Formatage simple pour affichage
+          const formatted = movements.map(m => ({
+              id: m.id,
+              product_id: m.product_id,
+              type: m.action === 'entry' ? 'Entrée' : 'Sortie',
+              quantity: m.quantity,
+              date: m.date.toISOString().split('T')[0] // Format YYYY-MM-DD
+          }));
+          
+          res.json(formatted);
+      } catch (err) {
+          console.error("Erreur mouvements:", err);
+          res.status(500).json({ message: "Erreur serveur" });
+      }
+  },
+
+  getBasicStats: async (req, res) => {
+      try {
+          const entryStats = await StockHistory.sum('quantity', {
+              where: { action: 'entry' }
+          });
+          
+          const exitStats = await StockHistory.sum('quantity', {
+              where: { action: 'exit' }
+          });
+          
+          res.json({
+              total_entries: entryStats || 0,
+              total_exits: exitStats || 0,
+              balance: (entryStats || 0) - (exitStats || 0)
+          });
+      } catch (err) {
+          console.error("Erreur statistiques:", err);
+          res.status(500).json({ message: "Erreur serveur" });
+      }
+  },
+
 
   exportHistory: async (req, res) => {
     const { month } = req.query;
